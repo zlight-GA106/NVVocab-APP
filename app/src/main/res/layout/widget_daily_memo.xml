@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/daily_memo_widget"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_daily_memo_background"
+    android:gravity="center_vertical"
+    android:orientation="vertical"
+    android:paddingHorizontal="18dp"
+    android:paddingVertical="8dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:fontFamily="sans"
+        android:maxLines="1"
+        android:text="@string/daily_memo_widget_title"
+        android:textColor="@color/widget_on_surface"
+        android:textSize="19sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/study_time_text"
+        style="@style/WidgetMemoTask"
+        android:text="@string/daily_memo_widget_study_placeholder" />
+
+    <ProgressBar
+        android:id="@+id/study_time_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="4dp"
+        android:layout_marginTop="2dp"
+        android:indeterminate="false"
+        android:max="100"
+        android:progress="0"
+        android:progressBackgroundTint="@color/widget_outline"
+        android:progressTint="@color/widget_progress" />
+
+    <TextView
+        android:id="@+id/memo_task_one"
+        style="@style/WidgetMemoTask" />
+
+    <TextView
+        android:id="@+id/memo_task_two"
+        style="@style/WidgetMemoTask" />
+
+    <TextView
+        android:id="@+id/memo_task_three"
+        style="@style/WidgetMemoTask" />
+</LinearLayout>
