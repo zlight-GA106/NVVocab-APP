@@ -1,7 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+val releaseKeystorePropertiesFile = rootProject.file("keystore.properties")
+val releaseKeystoreProperties = Properties().apply {
+    if (releaseKeystorePropertiesFile.isFile) {
+        releaseKeystorePropertiesFile.inputStream().use(::load)
+    }
 }
 
 android {
@@ -23,6 +32,17 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
+    val releaseSigningConfig = if (releaseKeystorePropertiesFile.isFile) {
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(releaseKeystoreProperties.getProperty("storeFile"))
+            storePassword = releaseKeystoreProperties.getProperty("storePassword")
+            keyAlias = releaseKeystoreProperties.getProperty("keyAlias")
+            keyPassword = releaseKeystoreProperties.getProperty("keyPassword")
+        }
+    } else {
+        null
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
@@ -31,6 +51,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            releaseSigningConfig?.let { signingConfig = it }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

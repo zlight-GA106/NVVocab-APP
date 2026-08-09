@@ -10,5 +10,7 @@ captures/
 app/build/
 *.jks
 *.keystore
+keystore.properties
+release-signing/
 device-*
 *.log
