@@ -7,10 +7,12 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Paint
+import android.os.Bundle
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.StrikethroughSpan
 import android.view.View
+import android.util.TypedValue
 import android.widget.RemoteViews
 import com.zlight106.nvvocab.MainActivity
 import com.zlight106.nvvocab.R
@@ -28,9 +30,21 @@ import java.time.ZoneId
 class DailyMemoWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         appWidgetIds.forEach { appWidgetId ->
-            manager.updateAppWidget(appWidgetId, buildRemoteViews(context))
+            manager.updateAppWidget(
+                appWidgetId,
+                buildRemoteViews(context, manager.getAppWidgetOptions(appWidgetId)),
+            )
         }
         DailyWidgetResetScheduler.scheduleNext(context)
+    }
+
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        manager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: Bundle,
+    ) {
+        manager.updateAppWidget(appWidgetId, buildRemoteViews(context, newOptions))
     }
 
     override fun onEnabled(context: Context) {
@@ -53,8 +67,12 @@ object DailyMemoWidgetUpdater {
         val component = ComponentName(context, DailyMemoWidgetProvider::class.java)
         val ids = manager.getAppWidgetIds(component)
         if (ids.isEmpty()) return
-        val views = buildRemoteViews(context)
-        ids.forEach { manager.updateAppWidget(it, views) }
+        ids.forEach { appWidgetId ->
+            manager.updateAppWidget(
+                appWidgetId,
+                buildRemoteViews(context, manager.getAppWidgetOptions(appWidgetId)),
+            )
+        }
     }
 }
 
@@ -69,7 +87,7 @@ private data class WidgetData(
     val quizBanks: List<QuizBank>,
 )
 
-private fun buildRemoteViews(context: Context): RemoteViews {
+private fun buildRemoteViews(context: Context, options: Bundle? = null): RemoteViews {
     val preferences = AppPreferences(context)
     val memoSettings = preferences.readDailyMemoSettings()
     val dayStart = LocalDate.now()
@@ -84,6 +102,7 @@ private fun buildRemoteViews(context: Context): RemoteViews {
         )
     }
     val views = RemoteViews(context.packageName, R.layout.widget_daily_memo)
+    applyWidgetTextScale(views, options)
     val launchIntent = Intent(context, MainActivity::class.java)
     val pendingIntent = PendingIntent.getActivity(
         context,
@@ -119,6 +138,22 @@ private fun buildRemoteViews(context: Context): RemoteViews {
         bindTask(views, R.id.memo_task_one, WidgetTask("未启用备忘项目", false))
     }
     return views
+}
+
+private fun applyWidgetTextScale(views: RemoteViews, options: Bundle?) {
+    val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 0
+    val useLargeText = minHeight >= 150
+    val titleSize = if (useLargeText) 24f else 22f
+    val bodySize = if (useLargeText) 18f else 16f
+    views.setTextViewTextSize(R.id.widget_title, TypedValue.COMPLEX_UNIT_SP, titleSize)
+    listOf(
+        R.id.study_time_text,
+        R.id.memo_task_one,
+        R.id.memo_task_two,
+        R.id.memo_task_three,
+    ).forEach { viewId ->
+        views.setTextViewTextSize(viewId, TypedValue.COMPLEX_UNIT_SP, bodySize)
+    }
 }
 
 private fun buildTasks(

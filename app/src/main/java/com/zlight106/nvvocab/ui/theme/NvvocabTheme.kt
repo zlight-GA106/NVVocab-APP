@@ -71,26 +71,58 @@ fun NvvocabTheme(
     }
     val systemDensity = LocalDensity.current
     val windowWidthPx = LocalWindowInfo.current.containerSize.width
+    val windowHeightPx = LocalWindowInfo.current.containerSize.height
     val windowWidthDp = if (windowWidthPx > 0) windowWidthPx / systemDensity.density else 360f
+    val windowHeightDp = if (windowHeightPx > 0) windowHeightPx / systemDensity.density else 800f
     // Some vendors expose fewer than 360 logical dp after applying their display-size
     // setting. Fixed Material dimensions then consume most of a row and force Chinese
     // text to wrap one character at a time. Give compact phones a stable logical width
     // while keeping tablets and normally configured phones at the system scale.
-    val compactScale = (windowWidthDp / 360f).coerceIn(0.82f, 1f)
+    val scaleProfile = responsiveUiScale(windowWidthDp, windowHeightDp)
     val responsiveDensity = remember(
         windowWidthPx,
+        windowHeightPx,
         systemDensity.density,
         systemDensity.fontScale,
     ) {
         Density(
-            density = systemDensity.density * compactScale,
+            density = systemDensity.density * scaleProfile.densityMultiplier,
             // Very large vendor font/display combinations otherwise apply the scale
             // twice. 1.15 still honours an enlarged accessibility font without clipping.
-            fontScale = systemDensity.fontScale.coerceIn(0.85f, 1.15f),
+            fontScale = (systemDensity.fontScale * scaleProfile.fontMultiplier).coerceIn(
+                0.85f,
+                if (scaleProfile.isLargeLandscape) 1.25f else 1.15f,
+            ),
         )
     }
     CompositionLocalProvider(LocalDensity provides responsiveDensity) {
         MaterialTheme(colorScheme = animateColorScheme(colors), content = content)
+    }
+}
+
+internal data class ResponsiveUiScale(
+    val densityMultiplier: Float,
+    val fontMultiplier: Float,
+    val isLargeLandscape: Boolean,
+)
+
+internal fun responsiveUiScale(widthDp: Float, heightDp: Float): ResponsiveUiScale {
+    val aspectRatio = if (heightDp > 0f) widthDp / heightDp else 0f
+    val largeLandscape = widthDp >= 960f &&
+        heightDp >= 540f &&
+        aspectRatio in 1.45f..2f
+    return when {
+        largeLandscape -> ResponsiveUiScale(
+            densityMultiplier = 1.06f,
+            fontMultiplier = 1.10f,
+            isLargeLandscape = true,
+        )
+        widthDp < 360f -> ResponsiveUiScale(
+            densityMultiplier = (widthDp / 360f).coerceIn(0.82f, 1f),
+            fontMultiplier = 1f,
+            isLargeLandscape = false,
+        )
+        else -> ResponsiveUiScale(1f, 1f, false)
     }
 }
 

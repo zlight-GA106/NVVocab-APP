@@ -1,6 +1,7 @@
 package com.zlight106.nvvocab.ui
 
 import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.only
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -32,6 +35,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -48,6 +52,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -91,6 +96,7 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
     val currentEntry by navController.currentBackStackEntryAsState()
     val practiceSessionVisible = currentEntry?.destination?.route == PRACTICE_SESSION_ROUTE
     var activePracticeSession by remember { mutableStateOf<PracticeSessionRequest?>(null) }
+    var sideNavigationExpanded by rememberSaveable { mutableStateOf(true) }
     val snackbarHostState = remember { SnackbarHostState() }
     val tags by viewModel.bookTags.collectAsStateWithLifecycle()
     val words by viewModel.words.collectAsStateWithLifecycle()
@@ -116,12 +122,18 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
         val compactHdNavigation = hdLandscape && maxHeight < 640.dp
         if (useSideNavigation && !practiceSessionVisible) {
             Row(Modifier.fillMaxSize()) {
-                WideNavigation(navController, compact = compactHdNavigation)
+                WideNavigation(
+                    navController = navController,
+                    compact = compactHdNavigation,
+                    expanded = sideNavigationExpanded,
+                    onToggle = { sideNavigationExpanded = !sideNavigationExpanded },
+                )
                 AppScaffold(
                     modifier = Modifier.weight(1f),
                     navController = navController,
                     snackbarHostState = snackbarHostState,
                     showBottomBar = false,
+                    showTopBarBrand = false,
                     viewModel = viewModel,
                     state = state,
                     tags = tags,
@@ -149,6 +161,7 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                 navController = navController,
                 snackbarHostState = snackbarHostState,
                 showBottomBar = !practiceSessionVisible && !useSideNavigation,
+                showTopBarBrand = true,
                 viewModel = viewModel,
                 state = state,
                 tags = tags,
@@ -180,6 +193,7 @@ private fun AppScaffold(
     navController: NavHostController,
     snackbarHostState: SnackbarHostState,
     showBottomBar: Boolean,
+    showTopBarBrand: Boolean,
     viewModel: MainViewModel,
     state: AppUiState,
     tags: List<String>,
@@ -202,7 +216,11 @@ private fun AppScaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             if (currentRoute != PRACTICE_SESSION_ROUTE) {
-                BrandTopBar(state, syncRuntimeState)
+                if (showTopBarBrand) {
+                    BrandTopBar(state, syncRuntimeState)
+                } else {
+                    CompactStatusBar(state, syncRuntimeState)
+                }
             }
         },
         bottomBar = {
@@ -279,6 +297,20 @@ private fun AppScaffold(
             }
             }
         }
+    }
+}
+
+@Composable
+private fun CompactStatusBar(state: AppUiState, syncRuntimeState: SyncRuntimeState) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.End))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ServerConnectionNotice(state = state, syncRuntimeState = syncRuntimeState)
     }
 }
 
@@ -387,56 +419,99 @@ private fun SyncRuntimeStatus?.title(): String = when (this) {
 }
 
 @Composable
-private fun WideNavigation(navController: NavHostController, compact: Boolean) {
+private fun WideNavigation(
+    navController: NavHostController,
+    compact: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
     val entry by navController.currentBackStackEntryAsState()
     val currentRoute = entry?.destination?.route ?: Destination.DASHBOARD.route
+    // Animating width forces the complete NavHost to remeasure on every frame, which
+    // stutters on some tablets. Snap the width and animate only this draw-only affordance.
+    val navigationWidth = when {
+        !expanded -> 84.dp
+        compact -> 240.dp
+        else -> 252.dp
+    }
+    val toggleRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else -90f,
+        animationSpec = tween(140),
+        label = "side-navigation-toggle",
+    )
     Surface(
-        modifier = Modifier.width(if (compact) 240.dp else 252.dp).fillMaxHeight(),
+        modifier = Modifier.width(navigationWidth).fillMaxHeight(),
         color = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 2.dp,
     ) {
         Column(
             modifier = Modifier
                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical + WindowInsetsSides.Start))
-                .padding(horizontal = 12.dp, vertical = if (compact) 10.dp else 24.dp),
+                .padding(horizontal = if (expanded) 12.dp else 8.dp, vertical = if (compact) 8.dp else 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 10.dp),
         ) {
+            IconButton(
+                onClick = onToggle,
+                modifier = Modifier.align(if (expanded) Alignment.End else Alignment.CenterHorizontally),
+            ) {
+                Icon(
+                    NvvIcons.ChevronDown,
+                    contentDescription = if (expanded) "折叠侧边栏" else "展开侧边栏",
+                    modifier = Modifier.rotate(toggleRotation),
+                )
+            }
             Image(
                 painter = painterResource(R.drawable.bwolf),
                 contentDescription = "单词速记",
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
-                    .width(if (compact) 48.dp else 72.dp)
-                    .padding(bottom = if (compact) 2.dp else 12.dp),
+                    .width(if (!expanded || compact) 48.dp else 72.dp)
+                    .padding(bottom = if (!expanded || compact) 2.dp else 8.dp),
             )
-            Text("单词速记", modifier = Modifier.align(Alignment.CenterHorizontally), style = MaterialTheme.typography.titleMedium)
-            Text(
-                "非易失性词库",
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(bottom = if (compact) 6.dp else 20.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Destination.entries.forEach { destination ->
-                NavigationDrawerItem(
-                    modifier = Modifier.heightIn(min = if (compact) 44.dp else 56.dp),
-                    selected = currentRoute == destination.route,
-                    onClick = { navController.open(destination.route) },
-                    icon = { Icon(destination.icon, null) },
-                    label = {
-                        Text(
-                            destination.label,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    shape = RoundedCornerShape(100.dp),
-                    colors = NavigationDrawerItemDefaults.colors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                        selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
+            if (expanded) {
+                Text("单词速记", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "非易失性词库",
+                    modifier = Modifier.padding(bottom = if (compact) 6.dp else 14.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            Destination.entries.forEach { destination ->
+                if (expanded) {
+                    NavigationDrawerItem(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = if (compact) 44.dp else 56.dp),
+                        selected = currentRoute == destination.route,
+                        onClick = { navController.open(destination.route) },
+                        icon = { Icon(destination.icon, null) },
+                        label = {
+                            Text(
+                                destination.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        shape = RoundedCornerShape(100.dp),
+                        colors = NavigationDrawerItemDefaults.colors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        ),
+                    )
+                } else {
+                    NavigationRailItem(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                        selected = currentRoute == destination.route,
+                        onClick = { navController.open(destination.route) },
+                        icon = {
+                            Icon(
+                                destination.icon,
+                                contentDescription = destination.label,
+                                modifier = Modifier.size(26.dp),
+                            )
+                        },
+                    )
+                }
             }
         }
     }
