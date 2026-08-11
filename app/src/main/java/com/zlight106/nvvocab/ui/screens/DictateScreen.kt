@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -79,6 +80,8 @@ fun DictateScreen(
     tags: List<String>,
     quizBanks: List<QuizBank>,
     words: List<WordEntry>,
+    administratorMode: Boolean,
+    onAdministratorModeChange: (Boolean) -> Unit,
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
     var category by remember { mutableStateOf(ReviewCategory.WORDS) }
@@ -122,7 +125,13 @@ fun DictateScreen(
         ) { selectedCategory ->
             when (selectedCategory) {
                 ReviewCategory.WORDS -> WordReviewPanel(viewModel, tags, onStartSession)
-                ReviewCategory.QUESTIONS -> QuizReviewPanel(viewModel, quizBanks, onStartSession)
+                ReviewCategory.QUESTIONS -> QuizReviewPanel(
+                    viewModel = viewModel,
+                    banks = quizBanks,
+                    administratorMode = administratorMode,
+                    onAdministratorModeChange = onAdministratorModeChange,
+                    onStartSession = onStartSession,
+                )
                 ReviewCategory.CONTRAST -> ContrastPracticePanel(viewModel, words, tags, onStartSession)
             }
         }
@@ -262,6 +271,8 @@ private fun WordReviewPanel(
 private fun QuizReviewPanel(
     viewModel: MainViewModel,
     banks: List<QuizBank>,
+    administratorMode: Boolean,
+    onAdministratorModeChange: (Boolean) -> Unit,
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
     var selectedBankId by remember { mutableStateOf<String?>(null) }
@@ -377,6 +388,23 @@ private fun QuizReviewPanel(
                             onValueChange = { randomCount = it },
                             label = "随机抽取数量",
                         )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onAdministratorModeChange(!administratorMode) },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Checkbox(checked = administratorMode, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("管理员模式", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "答题时在题目右上角显示正确答案。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     configurationError?.let {
                         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)

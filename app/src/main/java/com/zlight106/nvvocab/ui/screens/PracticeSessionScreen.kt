@@ -101,6 +101,7 @@ private data class ContrastResultRecord(
 fun PracticeSessionScreen(
     request: PracticeSessionRequest,
     viewModel: MainViewModel,
+    administratorMode: Boolean,
     onExit: () -> Unit,
 ) {
     var settled by remember(request) { mutableStateOf(false) }
@@ -144,6 +145,7 @@ fun PracticeSessionScreen(
                 is PracticeSessionRequest.Quiz -> QuizSession(
                     request = request,
                     viewModel = viewModel,
+                    showAnswers = administratorMode,
                     onSettled = { settled = true },
                     onExit = onExit,
                 )
@@ -331,6 +333,7 @@ private fun WordQuestion(
 private fun QuizSession(
     request: PracticeSessionRequest.Quiz,
     viewModel: MainViewModel,
+    showAnswers: Boolean,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -355,6 +358,7 @@ private fun QuizSession(
                 position = currentIndex + 1,
                 total = request.queue.size,
                 enabled = !settling,
+                showAnswer = showAnswers,
                 onComplete = { selectedAnswers ->
                     val updated = records + QuizResultRecord(request.queue[currentIndex], selectedAnswers)
                     records = updated
@@ -388,6 +392,7 @@ private fun QuizQuestion(
     position: Int,
     total: Int,
     enabled: Boolean,
+    showAnswer: Boolean,
     onComplete: (Set<String>) -> Unit,
 ) {
     var selectedAnswers by remember(question.id) { mutableStateOf<Set<String>>(emptySet()) }
@@ -397,9 +402,22 @@ private fun QuizQuestion(
 
     SectionCard {
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
                 Text("题目 $position / $total", color = MaterialTheme.colorScheme.primary)
-                Text("${question.score} 分", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(horizontalAlignment = Alignment.End) {
+                    if (showAnswer) {
+                        Text(
+                            administratorAnswerText(question.answers),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Text("${question.score} 分", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             Text(question.text, style = MaterialTheme.typography.titleLarge)
             Text(if (multipleChoice) "多选题" else "单选题", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -456,6 +474,9 @@ private fun QuizQuestion(
         }
     }
 }
+
+internal fun administratorAnswerText(answers: Set<String>): String =
+    "答案：${answers.sorted().joinToString("、")}"
 
 @Composable
 private fun ContrastSession(

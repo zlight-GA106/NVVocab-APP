@@ -39,6 +39,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 data class AppUiState(
+    val administratorMode: Boolean,
     val aiSettings: AiSettings,
     val aiTesting: Boolean = false,
     val automaticSync: Boolean,
@@ -310,6 +311,11 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         mutableUiState.value = readUiState()
     }
 
+    fun setAdministratorMode(enabled: Boolean) {
+        preferences.setAdministratorModeEnabled(enabled)
+        mutableUiState.value = readUiState()
+    }
+
     fun setThemePreset(id: String?) {
         preferences.saveThemePresetId(id)
         preferences.setDynamicColorEnabled(id == null)
@@ -404,6 +410,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     }
 
     private fun readUiState(message: String? = null): AppUiState = AppUiState(
+        administratorMode = preferences.isAdministratorModeEnabled(),
         aiSettings = preferences.readAiSettings(),
         aiTesting = false,
         automaticSync = preferences.isAutomaticSyncEnabled(),

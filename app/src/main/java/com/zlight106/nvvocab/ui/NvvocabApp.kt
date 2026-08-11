@@ -279,6 +279,8 @@ private fun AppScaffold(
                     tags = tags,
                     quizBanks = quizBanks,
                     words = words,
+                    administratorMode = state.administratorMode,
+                    onAdministratorModeChange = viewModel::setAdministratorMode,
                     onStartSession = onStartPracticeSession,
                 )
             }
@@ -291,6 +293,7 @@ private fun AppScaffold(
                     PracticeSessionScreen(
                         request = session,
                         viewModel = viewModel,
+                        administratorMode = state.administratorMode,
                         onExit = onClosePracticeSession,
                     )
                 }

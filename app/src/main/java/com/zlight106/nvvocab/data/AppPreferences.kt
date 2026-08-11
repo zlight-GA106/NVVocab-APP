@@ -121,6 +121,13 @@ class AppPreferences(context: Context) {
         preferences.edit().putBoolean(KEY_DYNAMIC_COLOR, enabled).apply()
     }
 
+    fun isAdministratorModeEnabled(): Boolean =
+        preferences.getBoolean(KEY_ADMINISTRATOR_MODE, false)
+
+    fun setAdministratorModeEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_ADMINISTRATOR_MODE, enabled).apply()
+    }
+
     fun readThemeMode(): ThemeMode = runCatching {
         ThemeMode.valueOf(preferences.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.name).orEmpty())
     }.getOrDefault(ThemeMode.SYSTEM)
@@ -351,6 +358,7 @@ class AppPreferences(context: Context) {
         const val KEY_AI_MODEL = "ai_model"
         const val KEY_AI_PROVIDER = "ai_provider"
         const val KEY_AI_SYSTEM_PROMPT = "ai_system_prompt"
+        const val KEY_ADMINISTRATOR_MODE = "administrator_mode"
         const val KEY_AUTO_SYNC = "automatic_sync"
         const val KEY_CONTRAST_PRESET = "contrast_practice_preset"
         const val KEY_DYNAMIC_COLOR = "dynamic_color"
