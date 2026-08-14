@@ -87,9 +87,19 @@ private data class WidgetData(
     val quizBanks: List<QuizBank>,
 )
 
+internal data class WidgetTextScale(
+    val titleSp: Float,
+    val bodySp: Float,
+)
+
 private fun buildRemoteViews(context: Context, options: Bundle? = null): RemoteViews {
     val preferences = AppPreferences(context)
     val memoSettings = preferences.readDailyMemoSettings()
+    val visibleTaskCount = if (memoSettings.isRestDay(LocalDate.now().dayOfWeek.value)) {
+        1
+    } else {
+        memoSettings.items.size.coerceIn(1, 3)
+    }
     val dayStart = LocalDate.now()
         .atStartOfDay(ZoneId.systemDefault())
         .toInstant()
@@ -102,7 +112,7 @@ private fun buildRemoteViews(context: Context, options: Bundle? = null): RemoteV
         )
     }
     val views = RemoteViews(context.packageName, R.layout.widget_daily_memo)
-    applyWidgetTextScale(views, options)
+    applyWidgetTextScale(views, options, visibleTaskCount)
     val launchIntent = Intent(context, MainActivity::class.java)
     val pendingIntent = PendingIntent.getActivity(
         context,
@@ -140,19 +150,37 @@ private fun buildRemoteViews(context: Context, options: Bundle? = null): RemoteV
     return views
 }
 
-private fun applyWidgetTextScale(views: RemoteViews, options: Bundle?) {
-    val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 0
-    val useLargeText = minHeight >= 150
-    val titleSize = if (useLargeText) 24f else 22f
-    val bodySize = if (useLargeText) 18f else 16f
-    views.setTextViewTextSize(R.id.widget_title, TypedValue.COMPLEX_UNIT_SP, titleSize)
+private fun applyWidgetTextScale(
+    views: RemoteViews,
+    options: Bundle?,
+    visibleTaskCount: Int,
+) {
+    val minWidth = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) ?: 280
+    val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 110
+    val scale = resolveWidgetTextScale(minWidth, minHeight, visibleTaskCount)
+    views.setTextViewTextSize(R.id.widget_title, TypedValue.COMPLEX_UNIT_SP, scale.titleSp)
     listOf(
         R.id.study_time_text,
         R.id.memo_task_one,
         R.id.memo_task_two,
         R.id.memo_task_three,
     ).forEach { viewId ->
-        views.setTextViewTextSize(viewId, TypedValue.COMPLEX_UNIT_SP, bodySize)
+        views.setTextViewTextSize(viewId, TypedValue.COMPLEX_UNIT_SP, scale.bodySp)
+    }
+}
+
+internal fun resolveWidgetTextScale(
+    minWidth: Int,
+    minHeight: Int,
+    visibleTaskCount: Int,
+): WidgetTextScale {
+    val taskCount = visibleTaskCount.coerceIn(1, 3)
+    return when {
+        taskCount == 1 && minWidth >= 260 && minHeight >= 105 -> WidgetTextScale(38f, 28f)
+        minHeight >= 210 -> WidgetTextScale(34f, 25f)
+        taskCount <= 2 && minWidth >= 260 && minHeight >= 125 -> WidgetTextScale(32f, 24f)
+        minWidth >= 260 && minHeight >= 100 -> WidgetTextScale(28f, 21f)
+        else -> WidgetTextScale(24f, 18f)
     }
 }
 

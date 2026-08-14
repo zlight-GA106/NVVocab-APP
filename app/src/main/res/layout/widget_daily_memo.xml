@@ -18,7 +18,7 @@
         android:maxLines="1"
         android:text="@string/daily_memo_widget_title"
         android:textColor="@color/widget_on_surface"
-        android:textSize="22sp"
+        android:textSize="28sp"
         android:textStyle="bold" />
 
     <TextView
