@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -52,12 +53,14 @@ import androidx.compose.ui.unit.dp
 import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.ContrastQuestion
+import com.zlight106.nvvocab.data.ContrastQuestionResult
 import com.zlight106.nvvocab.data.DictationMode
 import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.QuizQuestion
 import com.zlight106.nvvocab.data.QuizSessionAnswer
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.data.WordReviewResult
+import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.SectionCard
 import com.zlight106.nvvocab.ui.icons.NvvIcons
@@ -81,6 +84,10 @@ sealed interface PracticeSessionRequest {
         val timeLimitSeconds: Int,
         val hintEnabled: Boolean,
     ) : PracticeSessionRequest
+
+    data class WrongBook(
+        val queue: List<WrongQuestionEntry>,
+    ) : PracticeSessionRequest
 }
 
 private data class QuizResultRecord(
@@ -90,11 +97,6 @@ private data class QuizResultRecord(
     val correct: Boolean
         get() = selectedAnswers == question.answers
 }
-
-private data class ContrastResultRecord(
-    val selectedIndex: Int?,
-    val correct: Boolean,
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -143,7 +145,8 @@ fun PracticeSessionScreen(
                     onExit = onExit,
                 )
                 is PracticeSessionRequest.Quiz -> QuizSession(
-                    request = request,
+                    queue = request.queue,
+                    wrongBookSession = false,
                     viewModel = viewModel,
                     showAnswers = administratorMode,
                     onSettled = { settled = true },
@@ -152,6 +155,15 @@ fun PracticeSessionScreen(
                 is PracticeSessionRequest.Contrast -> ContrastSession(
                     request = request,
                     viewModel = viewModel,
+                    showAnswers = administratorMode,
+                    onSettled = { settled = true },
+                    onExit = onExit,
+                )
+                is PracticeSessionRequest.WrongBook -> QuizSession(
+                    queue = request.queue.map(WrongQuestionEntry::toQuizQuestion),
+                    wrongBookSession = true,
+                    viewModel = viewModel,
+                    showAnswers = true,
                     onSettled = { settled = true },
                     onExit = onExit,
                 )
@@ -187,6 +199,7 @@ private fun PracticeSessionRequest.title(): String = when (this) {
     is PracticeSessionRequest.Words -> if (mode == DictationMode.REVIEW) "复习默写" else "拼写练习"
     is PracticeSessionRequest.Quiz -> "题库答题"
     is PracticeSessionRequest.Contrast -> "对照练习"
+    is PracticeSessionRequest.WrongBook -> "错题复习"
 }
 
 @Composable
@@ -331,16 +344,18 @@ private fun WordQuestion(
 
 @Composable
 private fun QuizSession(
-    request: PracticeSessionRequest.Quiz,
+    queue: List<QuizQuestion>,
+    wrongBookSession: Boolean,
     viewModel: MainViewModel,
     showAnswers: Boolean,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
-    var currentIndex by remember(request) { mutableIntStateOf(0) }
-    var records by remember(request) { mutableStateOf<List<QuizResultRecord>>(emptyList()) }
-    var finished by remember(request) { mutableStateOf(false) }
-    var settling by remember(request) { mutableStateOf(false) }
+    var currentIndex by remember(queue, wrongBookSession) { mutableIntStateOf(0) }
+    var records by remember(queue, wrongBookSession) { mutableStateOf<List<QuizResultRecord>>(emptyList()) }
+    var finished by remember(queue, wrongBookSession) { mutableStateOf(false) }
+    var settling by remember(queue, wrongBookSession) { mutableStateOf(false) }
+    var showWrongAnswers by remember(queue) { mutableStateOf(false) }
 
     SessionBody {
         if (finished) {
@@ -351,29 +366,65 @@ private fun QuizSession(
                 title = "答题已结算",
                 summary = "正确 $correctCount / ${records.size}，得分 $totalScore / $possibleScore",
                 onExit = onExit,
-            )
+            ) {
+                val wrongRecords = records.filterNot(QuizResultRecord::correct)
+                OutlinedButton(
+                    onClick = { showWrongAnswers = !showWrongAnswers },
+                    enabled = wrongRecords.isNotEmpty(),
+                    shape = CircleShape,
+                ) {
+                    Icon(NvvIcons.Eye, null)
+                    Text(
+                        if (showWrongAnswers) "收起错题" else "显示错题（${wrongRecords.size}）",
+                        Modifier.padding(start = 8.dp),
+                    )
+                }
+                if (showWrongAnswers) {
+                    wrongRecords.forEach { record ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.large,
+                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+                        ) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(record.question.text, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "正确答案：${record.question.answers.sorted().joinToString("、")}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         } else {
             QuizQuestion(
-                question = request.queue[currentIndex],
+                question = queue[currentIndex],
                 position = currentIndex + 1,
-                total = request.queue.size,
+                total = queue.size,
                 enabled = !settling,
                 showAnswer = showAnswers,
                 onComplete = { selectedAnswers ->
-                    val updated = records + QuizResultRecord(request.queue[currentIndex], selectedAnswers)
+                    val updated = records + QuizResultRecord(queue[currentIndex], selectedAnswers)
                     records = updated
-                    if (currentIndex + 1 < request.queue.size) {
+                    if (currentIndex + 1 < queue.size) {
                         currentIndex += 1
                     } else {
                         settling = true
-                        viewModel.recordQuizSession(
+                        val complete = {
+                            settling = false
+                            finished = true
+                            onSettled()
+                        }
+                        val failure = { settling = false }
+                        if (wrongBookSession) viewModel.recordWrongQuestionSession(
                             answers = updated.map { QuizSessionAnswer(it.question, it.selectedAnswers) },
-                            onComplete = {
-                                settling = false
-                                finished = true
-                                onSettled()
-                            },
-                            onFailure = { settling = false },
+                            onComplete = complete,
+                            onFailure = failure,
+                        ) else viewModel.recordQuizSession(
+                            answers = updated.map { QuizSessionAnswer(it.question, it.selectedAnswers) },
+                            onComplete = complete,
+                            onFailure = failure,
                         )
                     }
                 },
@@ -482,11 +533,12 @@ internal fun administratorAnswerText(answers: Set<String>): String =
 private fun ContrastSession(
     request: PracticeSessionRequest.Contrast,
     viewModel: MainViewModel,
+    showAnswers: Boolean,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
     var currentIndex by remember(request) { mutableIntStateOf(0) }
-    var records by remember(request) { mutableStateOf<List<ContrastResultRecord>>(emptyList()) }
+    var records by remember(request) { mutableStateOf<List<ContrastQuestionResult>>(emptyList()) }
     var finished by remember(request) { mutableStateOf(false) }
     var settling by remember(request) { mutableStateOf(false) }
     val startedAt = remember(request) { System.currentTimeMillis() }
@@ -494,7 +546,7 @@ private fun ContrastSession(
 
     SessionBody {
         if (finished) {
-            val correctCount = records.count(ContrastResultRecord::correct)
+            val correctCount = records.count(ContrastQuestionResult::correct)
             val accuracy = if (records.isEmpty()) 0 else correctCount * 100 / records.size
             SessionResult(
                 title = "对照练习已结算",
@@ -508,12 +560,13 @@ private fun ContrastSession(
                 total = request.queue.size,
                 timeLimitSeconds = request.timeLimitSeconds,
                 hintEnabled = request.hintEnabled,
+                showAnswer = showAnswers,
                 enabled = !settling,
                 onComplete = { selectedIndex ->
                     val question = request.queue[currentIndex]
-                    val updated = records + ContrastResultRecord(
+                    val updated = records + ContrastQuestionResult(
+                        question = question,
                         selectedIndex = selectedIndex,
-                        correct = selectedIndex == question.correctIndex,
                     )
                     records = updated
                     if (currentIndex + 1 < request.queue.size) {
@@ -528,10 +581,11 @@ private fun ContrastSession(
                                 practiceType = request.practiceType,
                                 difficulty = request.difficulty,
                                 questionCount = request.queue.size,
-                                correctCount = updated.count(ContrastResultRecord::correct),
+                                correctCount = updated.count(ContrastQuestionResult::correct),
                                 elapsedSeconds = elapsedSeconds,
                                 hintEnabled = request.hintEnabled,
                             ),
+                            results = updated,
                             onComplete = {
                                 settling = false
                                 finished = true
@@ -557,6 +611,7 @@ private fun ContrastQuestion(
     total: Int,
     timeLimitSeconds: Int,
     hintEnabled: Boolean,
+    showAnswer: Boolean,
     enabled: Boolean,
     onComplete: (Int?) -> Unit,
 ) {
@@ -580,7 +635,16 @@ private fun ContrastQuestion(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text("题目 $position / $total", color = MaterialTheme.colorScheme.primary)
-                Text("${remainingSeconds}s", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(horizontalAlignment = Alignment.End) {
+                    if (showAnswer) {
+                        Text(
+                            "答案：${question.options[question.correctIndex]}",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Text("${remainingSeconds}s", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             LinearProgressIndicator(
                 progress = { remainingSeconds.toFloat() / timeLimitSeconds.coerceAtLeast(1) },
@@ -648,14 +712,17 @@ private fun ContrastQuestion(
 
 @Composable
 private fun SessionBody(content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        content = content,
-    )
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 920.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content,
+        )
+    }
 }
 
 @Composable
@@ -663,6 +730,7 @@ private fun SessionResult(
     title: String,
     summary: String,
     onExit: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit = {},
 ) {
     SectionCard {
         Column(
@@ -673,9 +741,20 @@ private fun SessionResult(
             Icon(NvvIcons.Check, null, tint = MaterialTheme.colorScheme.primary)
             Text(title, style = MaterialTheme.typography.headlineSmall)
             Text(summary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            content()
             Button(onClick = onExit, shape = CircleShape) {
                 Text("返回沉浸复习")
             }
         }
     }
 }
+
+private fun WrongQuestionEntry.toQuizQuestion(): QuizQuestion = QuizQuestion(
+    id = questionKey,
+    bankId = bankId ?: "wrong-book",
+    originalIndex = 0,
+    score = 10,
+    text = questionText,
+    options = options,
+    answers = correctAnswers,
+)

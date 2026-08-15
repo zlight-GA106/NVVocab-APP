@@ -40,6 +40,10 @@ class AppPreferences(context: Context) {
             apiKey = preferences.getString(KEY_AI_API_KEY, "").orEmpty().trim(),
             model = preferences.getString(KEY_AI_MODEL, "deepseek-v4-flash").orEmpty().trim(),
             systemPrompt = resolvedPrompt,
+            analysisPrompt = preferences.getString(
+                KEY_AI_ANALYSIS_PROMPT,
+                DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT,
+            ).orEmpty().trim().ifBlank { DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT },
         )
     }
 
@@ -50,6 +54,7 @@ class AppPreferences(context: Context) {
             .putString(KEY_AI_API_KEY, settings.apiKey.trim())
             .putString(KEY_AI_MODEL, settings.model.trim())
             .putString(KEY_AI_SYSTEM_PROMPT, settings.systemPrompt.trim())
+            .putString(KEY_AI_ANALYSIS_PROMPT, settings.analysisPrompt.trim())
             .apply()
     }
 
@@ -354,6 +359,7 @@ class AppPreferences(context: Context) {
     private companion object {
         const val KEY_ACCESS_TOKEN = "access_token"
         const val KEY_AI_API_KEY = "ai_api_key"
+        const val KEY_AI_ANALYSIS_PROMPT = "ai_analysis_prompt"
         const val KEY_AI_BASE_URL = "ai_base_url"
         const val KEY_AI_MODEL = "ai_model"
         const val KEY_AI_PROVIDER = "ai_provider"

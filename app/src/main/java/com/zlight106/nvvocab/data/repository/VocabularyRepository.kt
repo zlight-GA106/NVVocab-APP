@@ -20,6 +20,10 @@ import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.SupabaseConfig
 import com.zlight106.nvvocab.data.SyncReport
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.ContrastQuestionResult
+import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.WrongQuestionResult
+import com.zlight106.nvvocab.data.WrongQuestionSource
 import com.zlight106.nvvocab.data.local.NvvocabDatabase
 import com.zlight106.nvvocab.data.network.AiPracticeGateway
 import com.zlight106.nvvocab.data.network.AuthOutcome
@@ -53,6 +57,7 @@ class VocabularyRepository(
     private val mutableQuizBanks = MutableStateFlow<List<QuizBank>>(emptyList())
     private val mutableContrastPracticeSessions = MutableStateFlow<List<ContrastPracticeSession>>(emptyList())
     private val mutableDailyPracticeProgress = MutableStateFlow(DailyPracticeProgress())
+    private val mutableWrongQuestions = MutableStateFlow<List<WrongQuestionEntry>>(emptyList())
     private val mutableLocalDataLoaded = MutableStateFlow(false)
 
     val words: StateFlow<List<WordEntry>> = mutableWords.asStateFlow()
@@ -62,6 +67,7 @@ class VocabularyRepository(
     val contrastPracticeSessions: StateFlow<List<ContrastPracticeSession>> =
         mutableContrastPracticeSessions.asStateFlow()
     val dailyPracticeProgress: StateFlow<DailyPracticeProgress> = mutableDailyPracticeProgress.asStateFlow()
+    val wrongQuestions: StateFlow<List<WrongQuestionEntry>> = mutableWrongQuestions.asStateFlow()
     val localDataLoaded: StateFlow<Boolean> = mutableLocalDataLoaded.asStateFlow()
 
     suspend fun refreshLocal() = withContext(Dispatchers.IO) {
@@ -71,6 +77,7 @@ class VocabularyRepository(
         mutableQuizBanks.value = database.getQuizBanks()
         mutableContrastPracticeSessions.value = database.getRecentContrastPracticeSessions()
         mutableDailyPracticeProgress.value = database.getDailyPracticeProgress(startOfTodayMillis())
+        mutableWrongQuestions.value = database.getWrongQuestions()
         mutableLocalDataLoaded.value = true
     }
 
@@ -185,6 +192,7 @@ class VocabularyRepository(
     suspend fun recordQuizSession(answers: List<com.zlight106.nvvocab.data.QuizSessionAnswer>) =
         withContext(Dispatchers.IO) {
             val answeredAt = System.currentTimeMillis()
+            val bankNames = database.getQuizBanks().associate { it.id to it.name }
             answers.forEachIndexed { index, answer ->
                 val correct = answer.selectedAnswers == answer.question.answers
                 database.insertQuizAttempt(
@@ -199,9 +207,92 @@ class VocabularyRepository(
                     ),
                 )
             }
+            database.recordWrongQuestionResults(
+                answers.map { answer ->
+                    WrongQuestionResult(
+                        source = WrongQuestionSource.QUIZ,
+                        bankId = answer.question.bankId,
+                        bankName = bankNames[answer.question.bankId] ?: "未命名题库",
+                        questionKey = answer.question.id,
+                        questionText = answer.question.text,
+                        options = answer.question.options,
+                        correctAnswers = answer.question.answers,
+                        correct = answer.selectedAnswers == answer.question.answers,
+                    )
+                },
+                preferences.readSession()?.userId,
+            )
+            mutableWrongQuestions.value = database.getWrongQuestions()
             mutableDailyPracticeProgress.value = database.getDailyPracticeProgress(startOfTodayMillis())
             onLocalDataChanged()
         }
+
+    suspend fun recordWrongQuestionSession(answers: List<com.zlight106.nvvocab.data.QuizSessionAnswer>) =
+        withContext(Dispatchers.IO) {
+            val existingByKey = database.getWrongQuestions().associateBy(WrongQuestionEntry::questionKey)
+            database.recordWrongQuestionResults(
+                answers.map { answer ->
+                    val existing = existingByKey[answer.question.id]
+                    WrongQuestionResult(
+                        source = existing?.source ?: WrongQuestionSource.QUIZ,
+                        bankId = existing?.bankId ?: answer.question.bankId,
+                        bankName = existing?.bankName ?: "错题复习",
+                        questionKey = answer.question.id,
+                        questionText = answer.question.text,
+                        options = answer.question.options,
+                        correctAnswers = answer.question.answers,
+                        correct = answer.selectedAnswers == answer.question.answers,
+                    )
+                },
+                preferences.readSession()?.userId,
+            )
+            mutableWrongQuestions.value = database.getWrongQuestions()
+            onLocalDataChanged()
+        }
+
+    suspend fun recordContrastQuestionResults(
+        results: List<ContrastQuestionResult>,
+        practiceType: ContrastPracticeType,
+    ) = withContext(Dispatchers.IO) {
+        val bankName = when (practiceType) {
+            ContrastPracticeType.CHINESE_TO_ENGLISH -> "对照练习：中文翻译英文"
+            ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH -> "对照练习：英文释义选词"
+            ContrastPracticeType.ENGLISH_TO_CHINESE -> "对照练习：英文翻译中文"
+        }
+        database.recordWrongQuestionResults(
+            results.map { result ->
+                WrongQuestionResult(
+                    source = WrongQuestionSource.CONTRAST,
+                    bankId = null,
+                    bankName = bankName,
+                    questionKey = result.question.id,
+                    questionText = result.question.prompt,
+                    options = result.question.options.mapIndexed { index, text ->
+                        QuizOption(('A'.code + index).toChar().toString(), text)
+                    },
+                    correctAnswers = setOf(('A'.code + result.question.correctIndex).toChar().toString()),
+                    correct = result.correct,
+                )
+            },
+            preferences.readSession()?.userId,
+        )
+        mutableWrongQuestions.value = database.getWrongQuestions()
+        onLocalDataChanged()
+    }
+
+    suspend fun setWrongQuestionFavorite(id: String, favorite: Boolean) = withContext(Dispatchers.IO) {
+        database.setWrongQuestionFavorite(id, favorite)
+        mutableWrongQuestions.value = database.getWrongQuestions()
+        onLocalDataChanged()
+    }
+
+    suspend fun analyzeWrongQuestion(entry: WrongQuestionEntry): String = withContext(Dispatchers.IO) {
+        val analysis = aiPracticeGateway.analyzeWrongQuestion(preferences.readAiSettings(), entry)
+        database.saveWrongQuestionAnalysis(entry.id, analysis)
+        mutableWrongQuestions.value = database.getWrongQuestions()
+        onLocalDataChanged()
+        analysis
+    }
 
     suspend fun renameQuizBank(bankId: String, name: String) = withContext(Dispatchers.IO) {
         database.renameQuizBank(bankId, name)
@@ -307,26 +398,33 @@ class VocabularyRepository(
         database.upsertRemoteReviewLogs(remoteLogs)
         val remoteTitleLists = gateway.fetchTitleLists(config, session)
         database.upsertRemoteTitleLists(remoteTitleLists)
+        val remoteWrongQuestions = gateway.fetchWrongQuestions(config, session)
+        database.upsertRemoteWrongQuestions(remoteWrongQuestions)
 
         val deletedTitleListIds = database.getDeletedTitleListIds()
         val dirtyWords = database.getDirtyWords()
         val dirtyLogs = database.getDirtyReviewLogs()
         val dirtyTitleLists = database.getDirtyTitleLists()
+        val dirtyWrongQuestions = database.getDirtyWrongQuestions()
         gateway.deleteTitleLists(config, session, deletedTitleListIds)
         database.clearDeletedTitleLists(deletedTitleListIds)
         gateway.upsertWords(config, session, dirtyWords)
         gateway.upsertReviewLogs(config, session, dirtyLogs)
         gateway.upsertTitleLists(config, session, dirtyTitleLists)
+        gateway.upsertWrongQuestions(config, session, dirtyWrongQuestions)
         database.markWordsClean(dirtyWords.map(WordEntry::id))
         database.markReviewLogsClean(dirtyLogs.map { it.id })
         database.markTitleListsClean(dirtyTitleLists.map { it.id })
+        database.markWrongQuestionsClean(dirtyWrongQuestions.map { it.id })
         refreshLocal()
         SyncReport(
             downloadedLogs = remoteLogs.size,
             downloadedTitleLists = remoteTitleLists.size,
+            downloadedWrongQuestions = remoteWrongQuestions.size,
             downloadedWords = remoteWords.size,
             uploadedLogs = dirtyLogs.size,
             uploadedTitleLists = dirtyTitleLists.size,
+            uploadedWrongQuestions = dirtyWrongQuestions.size,
             uploadedWords = dirtyWords.size,
         )
     }

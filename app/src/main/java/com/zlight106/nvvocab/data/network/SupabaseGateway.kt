@@ -10,6 +10,8 @@ import com.zlight106.nvvocab.data.ReviewLogEntry
 import com.zlight106.nvvocab.data.SupabaseConfig
 import com.zlight106.nvvocab.data.TitleListEntry
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.WrongQuestionSource
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
@@ -264,6 +266,105 @@ class SupabaseGateway {
                 accessToken = session.accessToken,
                 prefer = "return=minimal",
             )
+        }
+    }
+
+    suspend fun upsertWrongQuestions(
+        config: SupabaseConfig,
+        session: AuthSession,
+        entries: List<WrongQuestionEntry>,
+    ) = withContext(Dispatchers.IO) {
+        if (entries.isEmpty()) return@withContext
+        val payload = JSONArray().apply {
+            entries.forEach { entry ->
+                put(
+                    JSONObject()
+                        .put("id", entry.id)
+                        .put("user_id", session.userId)
+                        .put("source", entry.source.name)
+                        .put("bank_id", entry.bankId ?: JSONObject.NULL)
+                        .put("bank_name", entry.bankName)
+                        .put("question_key", entry.questionKey)
+                        .put("question_text", entry.questionText)
+                        .put(
+                            "options",
+                            JSONArray().apply {
+                                entry.options.forEach { option ->
+                                    put(JSONObject().put("id", option.id).put("text", option.text))
+                                }
+                            },
+                        )
+                        .put("correct_answers", JSONArray(entry.correctAnswers.sorted()))
+                        .put("wrong_count", entry.wrongCount)
+                        .put("correct_count", entry.correctCount)
+                        .put("favorite", entry.favorite)
+                        .put("ai_analysis", entry.aiAnalysis ?: JSONObject.NULL)
+                        .put("last_wrong_at", Instant.ofEpochMilli(entry.lastWrongAt).toString())
+                        .put(
+                            "last_reviewed_at",
+                            entry.lastReviewedAt?.let { Instant.ofEpochMilli(it).toString() } ?: JSONObject.NULL,
+                        ),
+                )
+            }
+        }
+        request(
+            config = config,
+            path = "/rest/v1/wrong_questions?on_conflict=user_id,source,question_key",
+            method = "POST",
+            body = payload.toString(),
+            accessToken = session.accessToken,
+            prefer = "resolution=merge-duplicates,return=minimal",
+        )
+    }
+
+    suspend fun fetchWrongQuestions(
+        config: SupabaseConfig,
+        session: AuthSession,
+    ): List<WrongQuestionEntry> = withContext(Dispatchers.IO) {
+        val response = request(
+            config = config,
+            path = "/rest/v1/wrong_questions?select=id,user_id,source,bank_id,bank_name,question_key,question_text,options,correct_answers,wrong_count,correct_count,favorite,ai_analysis,last_wrong_at,last_reviewed_at&order=last_wrong_at.desc",
+            method = "GET",
+            accessToken = session.accessToken,
+        )
+        val payload = JSONArray(response)
+        buildList {
+            for (index in 0 until payload.length()) {
+                val item = payload.getJSONObject(index)
+                val optionsPayload = item.optJSONArray("options") ?: JSONArray()
+                val options = buildList {
+                    for (optionIndex in 0 until optionsPayload.length()) {
+                        val option = optionsPayload.optJSONObject(optionIndex) ?: continue
+                        add(QuizOption(option.optString("id"), option.optString("text")))
+                    }
+                }
+                val answersPayload = item.optJSONArray("correct_answers") ?: JSONArray()
+                val answers = buildSet {
+                    for (answerIndex in 0 until answersPayload.length()) {
+                        answersPayload.optString(answerIndex).takeIf(String::isNotBlank)?.let(::add)
+                    }
+                }
+                add(
+                    WrongQuestionEntry(
+                        id = item.getString("id"),
+                        userId = item.optString("user_id").ifBlank { session.userId },
+                        source = item.optEnum("source", WrongQuestionSource.QUIZ),
+                        bankId = item.optNullableString("bank_id"),
+                        bankName = item.optString("bank_name", "未命名题库"),
+                        questionKey = item.getString("question_key"),
+                        questionText = item.getString("question_text"),
+                        options = options,
+                        correctAnswers = answers,
+                        wrongCount = item.optInt("wrong_count", 1),
+                        correctCount = item.optInt("correct_count", 0),
+                        favorite = item.optBoolean("favorite", false),
+                        aiAnalysis = item.optNullableString("ai_analysis"),
+                        lastWrongAt = parseInstant(item.optString("last_wrong_at")),
+                        lastReviewedAt = item.optNullableString("last_reviewed_at")?.let(::parseInstant),
+                        dirty = false,
+                    ),
+                )
+            }
         }
     }
 

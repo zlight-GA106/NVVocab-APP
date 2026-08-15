@@ -105,6 +105,62 @@ data class QuizSessionAnswer(
     val selectedAnswers: Set<String>,
 )
 
+enum class WrongQuestionSource {
+    QUIZ,
+    CONTRAST,
+}
+
+data class WrongQuestionEntry(
+    val id: String,
+    val userId: String?,
+    val source: WrongQuestionSource,
+    val bankId: String?,
+    val bankName: String,
+    val questionKey: String,
+    val questionText: String,
+    val options: List<QuizOption>,
+    val correctAnswers: Set<String>,
+    val wrongCount: Int,
+    val correctCount: Int,
+    val favorite: Boolean,
+    val aiAnalysis: String?,
+    val lastWrongAt: Long,
+    val lastReviewedAt: Long?,
+    val dirty: Boolean,
+) {
+    val attemptCount: Int
+        get() = wrongCount + correctCount
+
+    val proficiencyPercent: Int
+        get() = if (attemptCount == 0) 0 else (correctCount * 100f / attemptCount).toInt().coerceIn(0, 100)
+}
+
+data class WrongQuestionResult(
+    val source: WrongQuestionSource,
+    val bankId: String?,
+    val bankName: String,
+    val questionKey: String,
+    val questionText: String,
+    val options: List<QuizOption>,
+    val correctAnswers: Set<String>,
+    val correct: Boolean,
+)
+
+data class ContrastQuestionResult(
+    val question: ContrastQuestion,
+    val selectedIndex: Int?,
+) {
+    val correct: Boolean
+        get() = selectedIndex == question.correctIndex
+}
+
+enum class WrongQuestionSort {
+    LATEST,
+    WRONG_COUNT,
+    PROFICIENCY_LOW,
+    PROFICIENCY_HIGH,
+}
+
 data class AuthSession(
     val accessToken: String,
     val refreshToken: String,
@@ -129,6 +185,7 @@ data class AiSettings(
     val apiKey: String = "",
     val model: String = "deepseek-v4-flash",
     val systemPrompt: String = DEFAULT_AI_PROMPT,
+    val analysisPrompt: String = DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT,
 )
 
 const val LEGACY_DEFAULT_AI_PROMPT = """你是单词速记应用中的英语学习助手。请使用简洁、准确的中文解释词义、常见搭配和易错点；需要生成练习时，必须基于用户提供的词库内容，不虚构单词数据。"""
@@ -147,6 +204,8 @@ const val DEFAULT_AI_PROMPT = """你是单词速记应用中的英语对照练�
 </quiz>
 
 每个目标词必须按输入顺序生成且只生成一道 question。每题只能有一个正确答案。option 的 id 必须从 A 开始连续排列，answer 必须填写正确选项的 id。选项数量必须符合用户指令并且不得重复。score 固定为 10。不要生成 password 字段。文本中的小于号、大于号、与号、引号和撇号必须按 XML 规则转义。"""
+
+const val DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT = """请分析下面这道英语学习错题。输出中文纯文本，依次说明正确答案、核心知识点、常见误区和一条便于记忆的建议。保持简洁，不要使用 Markdown 表格。"""
 
 enum class ContrastPracticeType {
     CHINESE_TO_ENGLISH,
@@ -316,6 +375,7 @@ enum class ReviewCategory {
     WORDS,
     QUESTIONS,
     CONTRAST,
+    WRONG_BOOK,
 }
 
 enum class QuizQueueMode {
@@ -345,8 +405,10 @@ data class SyncSettings(
 data class SyncReport(
     val downloadedLogs: Int,
     val downloadedTitleLists: Int,
+    val downloadedWrongQuestions: Int,
     val downloadedWords: Int,
     val uploadedLogs: Int,
     val uploadedTitleLists: Int,
+    val uploadedWrongQuestions: Int,
     val uploadedWords: Int,
 )

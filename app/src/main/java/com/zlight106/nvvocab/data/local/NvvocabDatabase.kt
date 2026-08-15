@@ -18,10 +18,15 @@ import com.zlight106.nvvocab.data.QuizSource
 import com.zlight106.nvvocab.data.ReviewLogEntry
 import com.zlight106.nvvocab.data.TitleListEntry
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.WrongQuestionResult
+import com.zlight106.nvvocab.data.WrongQuestionSource
 import com.zlight106.nvvocab.domain.ReviewCadenceState
 import java.io.FileInputStream
 import java.io.OutputStream
 import java.util.UUID
+import org.json.JSONArray
+import org.json.JSONObject
 
 class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     context,
@@ -74,6 +79,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         createQuizTables(database)
         createDeletedTitleListsTable(database)
         createContrastPracticeTables(database)
+        createWrongQuestionsTable(database)
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -88,6 +94,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             database.execSQL("CREATE INDEX IF NOT EXISTS idx_quiz_banks_dirty ON quiz_banks(dirty)")
         }
         if (oldVersion < 5) createDeletedTitleListsTable(database)
+        if (oldVersion < 6) createWrongQuestionsTable(database)
     }
 
     fun getWords(): List<WordEntry> = readableDatabase.query(
@@ -250,6 +257,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             update(TABLE_WORDS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
             update(TABLE_REVIEW_LOGS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
             update(TABLE_QUIZ_BANKS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
+            update(TABLE_WRONG_QUESTIONS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
             update(TABLE_DELETED_TITLELISTS, values, "user_id IS NULL OR user_id = ''", null)
         }
     }
@@ -531,6 +539,138 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         )
     }
 
+    fun getWrongQuestions(): List<WrongQuestionEntry> = readableDatabase.query(
+        TABLE_WRONG_QUESTIONS,
+        WRONG_QUESTION_COLUMNS,
+        null,
+        null,
+        null,
+        null,
+        "last_wrong_at DESC, id ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.toWrongQuestionEntry())
+        }
+    }
+
+    fun recordWrongQuestionResults(results: List<WrongQuestionResult>, userId: String?) {
+        if (results.isEmpty()) return
+        val now = System.currentTimeMillis()
+        writableDatabase.inTransaction {
+            results.forEachIndexed { index, result ->
+                val existing = query(
+                    TABLE_WRONG_QUESTIONS,
+                    arrayOf("id", "wrong_count", "correct_count", "last_wrong_at"),
+                    "source = ? AND question_key = ?",
+                    arrayOf(result.source.name, result.questionKey),
+                    null,
+                    null,
+                    null,
+                    "1",
+                ).use { cursor ->
+                    if (!cursor.moveToFirst()) null else ExistingWrongQuestion(
+                        id = cursor.getString(0),
+                        wrongCount = cursor.getInt(1),
+                        correctCount = cursor.getInt(2),
+                        lastWrongAt = cursor.getLong(3),
+                    )
+                }
+                if (existing == null && result.correct) return@forEachIndexed
+                val answeredAt = now + index
+                val values = ContentValues().apply {
+                    put("user_id", userId)
+                    put("source", result.source.name)
+                    put("bank_id", result.bankId)
+                    put("bank_name", result.bankName)
+                    put("question_key", result.questionKey)
+                    put("question_text", result.questionText)
+                    put("options_json", result.options.toJson().toString())
+                    put("correct_answers_json", JSONArray(result.correctAnswers.sorted()).toString())
+                    put("wrong_count", (existing?.wrongCount ?: 0) + if (result.correct) 0 else 1)
+                    put("correct_count", (existing?.correctCount ?: 0) + if (result.correct) 1 else 0)
+                    put("last_wrong_at", if (result.correct) existing?.lastWrongAt ?: answeredAt else answeredAt)
+                    put("last_reviewed_at", answeredAt)
+                    put("dirty", 1)
+                }
+                if (existing == null) {
+                    values.put("id", UUID.randomUUID().toString())
+                    values.put("favorite", 0)
+                    putNullIfMissing(values, "ai_analysis")
+                    insertOrThrow(TABLE_WRONG_QUESTIONS, null, values)
+                } else {
+                    update(TABLE_WRONG_QUESTIONS, values, "id = ?", arrayOf(existing.id))
+                }
+            }
+        }
+    }
+
+    fun setWrongQuestionFavorite(id: String, favorite: Boolean) {
+        writableDatabase.update(
+            TABLE_WRONG_QUESTIONS,
+            ContentValues().apply {
+                put("favorite", if (favorite) 1 else 0)
+                put("dirty", 1)
+            },
+            "id = ?",
+            arrayOf(id),
+        )
+    }
+
+    fun saveWrongQuestionAnalysis(id: String, analysis: String) {
+        writableDatabase.update(
+            TABLE_WRONG_QUESTIONS,
+            ContentValues().apply {
+                put("ai_analysis", analysis.trim())
+                put("dirty", 1)
+            },
+            "id = ?",
+            arrayOf(id),
+        )
+    }
+
+    fun getDirtyWrongQuestions(): List<WrongQuestionEntry> = readableDatabase.query(
+        TABLE_WRONG_QUESTIONS,
+        WRONG_QUESTION_COLUMNS,
+        "dirty = 1",
+        null,
+        null,
+        null,
+        "last_wrong_at ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.toWrongQuestionEntry())
+        }
+    }
+
+    fun markWrongQuestionsClean(ids: List<String>) {
+        if (ids.isEmpty()) return
+        writableDatabase.inTransaction {
+            ids.forEach { id ->
+                update(
+                    TABLE_WRONG_QUESTIONS,
+                    ContentValues().apply { put("dirty", 0) },
+                    "id = ?",
+                    arrayOf(id),
+                )
+            }
+        }
+    }
+
+    fun upsertRemoteWrongQuestions(entries: List<WrongQuestionEntry>) {
+        if (entries.isEmpty()) return
+        val dirtyIds = getDirtyWrongQuestions().mapTo(mutableSetOf(), WrongQuestionEntry::id)
+        writableDatabase.inTransaction {
+            entries.filterNot { it.id in dirtyIds }.forEach { entry ->
+                insertWithOnConflict(
+                    TABLE_WRONG_QUESTIONS,
+                    null,
+                    entry.toContentValues().apply { put("dirty", 0) },
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+        }
+    }
+
     fun renameQuizBank(bankId: String, name: String) {
         val normalizedName = name.trim()
         require(normalizedName.isNotEmpty()) { "题库名称不能为空。" }
@@ -688,6 +828,63 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         put("dirty", if (dirty) 1 else 0)
     }
 
+    private fun WrongQuestionEntry.toContentValues(): ContentValues = ContentValues().apply {
+        put("id", id)
+        put("user_id", userId)
+        put("source", source.name)
+        put("bank_id", bankId)
+        put("bank_name", bankName)
+        put("question_key", questionKey)
+        put("question_text", questionText)
+        put("options_json", options.toJson().toString())
+        put("correct_answers_json", JSONArray(correctAnswers.sorted()).toString())
+        put("wrong_count", wrongCount)
+        put("correct_count", correctCount)
+        put("favorite", if (favorite) 1 else 0)
+        put("ai_analysis", aiAnalysis)
+        put("last_wrong_at", lastWrongAt)
+        put("last_reviewed_at", lastReviewedAt)
+        put("dirty", if (dirty) 1 else 0)
+    }
+
+    private fun List<QuizOption>.toJson(): JSONArray = JSONArray().apply {
+        forEach { option -> put(JSONObject().put("id", option.id).put("text", option.text)) }
+    }
+
+    private fun Cursor.toWrongQuestionEntry(): WrongQuestionEntry {
+        val optionsPayload = JSONArray(getString(getColumnIndexOrThrow("options_json")))
+        val options = buildList {
+            for (index in 0 until optionsPayload.length()) {
+                val item = optionsPayload.optJSONObject(index) ?: continue
+                add(QuizOption(item.optString("id"), item.optString("text")))
+            }
+        }
+        val answersPayload = JSONArray(getString(getColumnIndexOrThrow("correct_answers_json")))
+        val answers = buildSet {
+            for (index in 0 until answersPayload.length()) {
+                answersPayload.optString(index).takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+        return WrongQuestionEntry(
+            id = getString(getColumnIndexOrThrow("id")),
+            userId = getStringOrNull("user_id"),
+            source = enumOrDefault("source", WrongQuestionSource.QUIZ),
+            bankId = getStringOrNull("bank_id"),
+            bankName = getString(getColumnIndexOrThrow("bank_name")),
+            questionKey = getString(getColumnIndexOrThrow("question_key")),
+            questionText = getString(getColumnIndexOrThrow("question_text")),
+            options = options,
+            correctAnswers = answers,
+            wrongCount = getInt(getColumnIndexOrThrow("wrong_count")),
+            correctCount = getInt(getColumnIndexOrThrow("correct_count")),
+            favorite = getInt(getColumnIndexOrThrow("favorite")) == 1,
+            aiAnalysis = getStringOrNull("ai_analysis"),
+            lastWrongAt = getLong(getColumnIndexOrThrow("last_wrong_at")),
+            lastReviewedAt = getLongOrNull("last_reviewed_at"),
+            dirty = getInt(getColumnIndexOrThrow("dirty")) == 1,
+        )
+    }
+
     private fun Cursor.toWordEntry(): WordEntry = WordEntry(
         id = getString(getColumnIndexOrThrow("id")),
         userId = getStringOrNull("user_id"),
@@ -716,6 +913,11 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     private fun Cursor.getStringOrNull(column: String): String? {
         val index = getColumnIndexOrThrow(column)
         return if (isNull(index)) null else getString(index)
+    }
+
+    private fun Cursor.getLongOrNull(column: String): Long? {
+        val index = getColumnIndexOrThrow(column)
+        return if (isNull(index)) null else getLong(index)
     }
 
     private inline fun <reified T : Enum<T>> Cursor.enumOrNull(column: String): T? =
@@ -865,6 +1067,49 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         )
     }
 
+    private fun createWrongQuestionsTable(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS wrong_questions (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT,
+                source TEXT NOT NULL,
+                bank_id TEXT,
+                bank_name TEXT NOT NULL,
+                question_key TEXT NOT NULL,
+                question_text TEXT NOT NULL,
+                options_json TEXT NOT NULL,
+                correct_answers_json TEXT NOT NULL,
+                wrong_count INTEGER NOT NULL DEFAULT 1,
+                correct_count INTEGER NOT NULL DEFAULT 0,
+                favorite INTEGER NOT NULL DEFAULT 0,
+                ai_analysis TEXT,
+                last_wrong_at INTEGER NOT NULL,
+                last_reviewed_at INTEGER,
+                dirty INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(source, question_key)
+            )
+            """.trimIndent(),
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_wrong_questions_user ON wrong_questions(user_id, last_wrong_at DESC)",
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_wrong_questions_dirty ON wrong_questions(dirty)",
+        )
+    }
+
+    private fun putNullIfMissing(values: ContentValues, key: String) {
+        if (!values.containsKey(key)) values.putNull(key)
+    }
+
+    private data class ExistingWrongQuestion(
+        val id: String,
+        val wrongCount: Int,
+        val correctCount: Int,
+        val lastWrongAt: Long,
+    )
+
     private inline fun SQLiteDatabase.inTransaction(block: SQLiteDatabase.() -> Unit) {
         beginTransaction()
         try {
@@ -877,7 +1122,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "nvvocab.db"
-        const val DATABASE_VERSION = 5
+        const val DATABASE_VERSION = 6
         const val TABLE_DELETED_TITLELISTS = "deleted_titlelists"
         const val TABLE_CONTRAST_SESSIONS = "contrast_practice_sessions"
         const val TABLE_QUIZ_ANSWERS = "quiz_answers"
@@ -887,6 +1132,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         const val TABLE_QUIZ_QUESTIONS = "quiz_questions"
         const val TABLE_REVIEW_LOGS = "review_logs"
         const val TABLE_WORDS = "words"
+        const val TABLE_WRONG_QUESTIONS = "wrong_questions"
 
         val WORD_COLUMNS = arrayOf(
             "id",
@@ -909,6 +1155,24 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             "word_id",
             "reviewed_at",
             "quality",
+            "dirty",
+        )
+        val WRONG_QUESTION_COLUMNS = arrayOf(
+            "id",
+            "user_id",
+            "source",
+            "bank_id",
+            "bank_name",
+            "question_key",
+            "question_text",
+            "options_json",
+            "correct_answers_json",
+            "wrong_count",
+            "correct_count",
+            "favorite",
+            "ai_analysis",
+            "last_wrong_at",
+            "last_reviewed_at",
             "dirty",
         )
     }

@@ -1,7 +1,11 @@
 package com.zlight106.nvvocab.ui.components
 
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,11 +31,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.zlight106.nvvocab.ui.icons.NvvIcons
 
 @Composable
@@ -66,14 +73,31 @@ fun <T> NvvDropdown(
     compact: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.99f else 1f,
+        animationSpec = tween(if (pressed) 80 else 140),
+        label = "dropdown-scale",
+    )
     val selectedLabel = options.firstOrNull { it.first == value }?.second.orEmpty()
     Column(modifier) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Box {
             Surface(
-                modifier = Modifier.fillMaxWidth().clickable { expanded = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ) { expanded = true },
                 shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.65f),
+                color = androidx.compose.ui.graphics.Color.Transparent,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
             ) {
                 Row(
@@ -139,4 +163,37 @@ fun SegmentedRow(
             content = content,
         )
     }
+}
+
+@Composable
+fun SelectionRow(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    spacing: Dp = 12.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.99f else 1f,
+        animationSpec = tween(if (pressed) 80 else 140),
+        label = "selection-row-scale",
+    )
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(spacing),
+        content = content,
+    )
 }

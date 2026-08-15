@@ -95,7 +95,7 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
     val navController = rememberNavController()
     val currentEntry by navController.currentBackStackEntryAsState()
     val practiceSessionVisible = currentEntry?.destination?.route == PRACTICE_SESSION_ROUTE
-    var activePracticeSession by remember { mutableStateOf<PracticeSessionRequest?>(null) }
+    val activePracticeSession by viewModel.activePracticeSession.collectAsStateWithLifecycle()
     var sideNavigationExpanded by rememberSaveable { mutableStateOf(true) }
     val snackbarHostState = remember { SnackbarHostState() }
     val tags by viewModel.bookTags.collectAsStateWithLifecycle()
@@ -146,12 +146,12 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                     syncRuntimeState = syncRuntimeState,
                     activePracticeSession = activePracticeSession,
                     onStartPracticeSession = { request ->
-                        activePracticeSession = request
+                        viewModel.startPracticeSession(request)
                         navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
                     },
                     onClosePracticeSession = {
                         navController.popBackStack()
-                        activePracticeSession = null
+                        viewModel.closePracticeSession()
                     },
                 )
             }
@@ -174,12 +174,12 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                 syncRuntimeState = syncRuntimeState,
                 activePracticeSession = activePracticeSession,
                 onStartPracticeSession = { request ->
-                    activePracticeSession = request
+                    viewModel.startPracticeSession(request)
                     navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
                 },
                 onClosePracticeSession = {
                     navController.popBackStack()
-                    activePracticeSession = null
+                    viewModel.closePracticeSession()
                 },
             )
         }

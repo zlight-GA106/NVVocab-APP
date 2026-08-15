@@ -13,6 +13,7 @@ import com.zlight106.nvvocab.data.ContrastPracticePreset
 import com.zlight106.nvvocab.data.ContrastPracticePresets
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.ContrastQuestion
+import com.zlight106.nvvocab.data.ContrastQuestionResult
 import com.zlight106.nvvocab.data.DailyProgressReference
 import com.zlight106.nvvocab.data.DailyProgressSettings
 import com.zlight106.nvvocab.data.DailyMemoSettings
@@ -27,6 +28,8 @@ import com.zlight106.nvvocab.data.SyncMode
 import com.zlight106.nvvocab.data.SyncSettings
 import com.zlight106.nvvocab.data.ThemeMode
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.ui.screens.PracticeSessionRequest
 import com.zlight106.nvvocab.data.repository.VocabularyRepository
 import com.zlight106.nvvocab.domain.WordTextParser
 import com.zlight106.nvvocab.sync.SyncScheduler
@@ -63,6 +66,8 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     private val repository: VocabularyRepository = application.repository
     private val mutableUiState = MutableStateFlow(readUiState())
     private val mutableContrastGenerationProgress = MutableStateFlow(0f)
+    private val mutableActivePracticeSession = MutableStateFlow<PracticeSessionRequest?>(null)
+    private val mutableAnalyzingWrongQuestionId = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<AppUiState> = mutableUiState.asStateFlow()
     val words = repository.words
@@ -74,6 +79,9 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     val studyTimeProgress = application.studyTimeTracker.progress
     val contrastGenerationProgress: StateFlow<Float> = mutableContrastGenerationProgress.asStateFlow()
     val localDataLoaded = repository.localDataLoaded
+    val wrongQuestions = repository.wrongQuestions
+    val activePracticeSession: StateFlow<PracticeSessionRequest?> = mutableActivePracticeSession.asStateFlow()
+    val analyzingWrongQuestionId: StateFlow<String?> = mutableAnalyzingWrongQuestionId.asStateFlow()
 
     init {
         viewModelScope.launch { repository.refreshLocal() }
@@ -195,6 +203,21 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         }
     }
 
+    fun recordWrongQuestionSession(
+        answers: List<com.zlight106.nvvocab.data.QuizSessionAnswer>,
+        onComplete: () -> Unit,
+        onFailure: () -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            runCatching { repository.recordWrongQuestionSession(answers) }
+                .onSuccess { onComplete() }
+                .onFailure {
+                    onFailure()
+                    showMessage(it.message ?: "错题复习结算失败")
+                }
+        }
+    }
+
     fun deleteQuizBank(bankId: String) {
         viewModelScope.launch {
             runCatching { repository.deleteQuizBank(bankId) }
@@ -238,17 +261,47 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
 
     fun recordContrastPracticeSession(
         session: ContrastPracticeSession,
+        results: List<ContrastQuestionResult> = emptyList(),
         onComplete: () -> Unit = {},
         onFailure: () -> Unit = {},
     ) {
         viewModelScope.launch {
-            runCatching { repository.recordContrastPracticeSession(session) }
+            runCatching {
+                repository.recordContrastPracticeSession(session)
+                repository.recordContrastQuestionResults(results, session.practiceType)
+            }
                 .onSuccess { onComplete() }
                 .onFailure {
                     onFailure()
                     showMessage(it.message ?: "练习结果保存失败")
                 }
         }
+    }
+
+    fun setWrongQuestionFavorite(entry: WrongQuestionEntry) {
+        viewModelScope.launch {
+            runCatching { repository.setWrongQuestionFavorite(entry.id, !entry.favorite) }
+                .onFailure { showMessage(it.message ?: "收藏状态更新失败") }
+        }
+    }
+
+    fun analyzeWrongQuestion(entry: WrongQuestionEntry) {
+        if (mutableAnalyzingWrongQuestionId.value != null) return
+        mutableAnalyzingWrongQuestionId.value = entry.id
+        viewModelScope.launch {
+            runCatching { repository.analyzeWrongQuestion(entry) }
+                .onSuccess { showMessage("AI 错题解析已生成") }
+                .onFailure { showMessage(it.message ?: "AI 错题解析失败") }
+            mutableAnalyzingWrongQuestionId.value = null
+        }
+    }
+
+    fun startPracticeSession(request: PracticeSessionRequest) {
+        mutableActivePracticeSession.value = request
+    }
+
+    fun closePracticeSession() {
+        mutableActivePracticeSession.value = null
     }
 
     fun exportDatabase(uri: Uri) {
@@ -378,7 +431,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
                 .onSuccess { report ->
                     SyncStateMonitor.update(SyncRuntimeStatus.SUCCESS)
                     mutableUiState.value = readUiState(
-                        message = "同步完成：上传 ${report.uploadedWords} 个单词、${report.uploadedLogs} 条记录和 ${report.uploadedTitleLists} 个题库",
+                        message = "同步完成：上传 ${report.uploadedWords} 个单词、${report.uploadedLogs} 条记录、${report.uploadedTitleLists} 个题库和 ${report.uploadedWrongQuestions} 道错题",
                     )
                 }
                 .onFailure {

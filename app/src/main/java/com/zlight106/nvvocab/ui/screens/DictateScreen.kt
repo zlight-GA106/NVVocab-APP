@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -52,6 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.DictationMode
 import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.QuizBank
@@ -62,6 +64,7 @@ import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.NvvDropdown
 import com.zlight106.nvvocab.ui.components.SectionCard
+import com.zlight106.nvvocab.ui.components.SelectionRow
 import com.zlight106.nvvocab.ui.components.SegmentedRow
 import com.zlight106.nvvocab.ui.icons.NvvIcons
 import java.time.Instant
@@ -86,8 +89,9 @@ fun DictateScreen(
 ) {
     var category by remember { mutableStateOf(ReviewCategory.WORDS) }
 
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(remember { ScrollState(0) }).padding(16.dp),
+        modifier = Modifier.fillMaxWidth().widthIn(max = 980.dp).verticalScroll(remember { ScrollState(0) }).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("沉浸复习", style = MaterialTheme.typography.headlineMedium)
@@ -95,29 +99,7 @@ fun DictateScreen(
             "在单词拼写、本地题库与 AI 对照练习之间切换。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        SegmentedRow(Modifier.fillMaxWidth()) {
-            ModeSegment(
-                modifier = Modifier.weight(1f),
-                selected = category == ReviewCategory.WORDS,
-                onClick = { category = ReviewCategory.WORDS },
-                label = "单词复习",
-                icon = NvvIcons.BrainCircuit,
-            )
-            ModeSegment(
-                modifier = Modifier.weight(1f),
-                selected = category == ReviewCategory.QUESTIONS,
-                onClick = { category = ReviewCategory.QUESTIONS },
-                label = "题库练习",
-                icon = NvvIcons.FileQuestion,
-            )
-            ModeSegment(
-                modifier = Modifier.weight(1f),
-                selected = category == ReviewCategory.CONTRAST,
-                onClick = { category = ReviewCategory.CONTRAST },
-                label = "对照练习",
-                icon = NvvIcons.Sparkles,
-            )
-        }
+        ReviewCategorySelector(category, onChange = { category = it })
         AnimatedContent(
             targetState = category,
             transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
@@ -132,7 +114,90 @@ fun DictateScreen(
                     onAdministratorModeChange = onAdministratorModeChange,
                     onStartSession = onStartSession,
                 )
-                ReviewCategory.CONTRAST -> ContrastPracticePanel(viewModel, words, tags, onStartSession)
+                ReviewCategory.CONTRAST -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AdministratorModeToggle(administratorMode, onAdministratorModeChange)
+                    ContrastPracticePanel(viewModel, words, tags, onStartSession)
+                }
+                ReviewCategory.WRONG_BOOK -> WrongBookPanel(viewModel, onStartSession)
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun ReviewCategorySelector(
+    selected: ReviewCategory,
+    onChange: (ReviewCategory) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val compact = maxWidth < 600.dp
+        if (compact) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SegmentedRow(Modifier.fillMaxWidth()) {
+                    ReviewCategory.entries.take(2).forEach { category ->
+                        ReviewCategorySegment(category, selected, onChange, Modifier.weight(1f))
+                    }
+                }
+                SegmentedRow(Modifier.fillMaxWidth()) {
+                    ReviewCategory.entries.drop(2).forEach { category ->
+                        ReviewCategorySegment(category, selected, onChange, Modifier.weight(1f))
+                    }
+                }
+            }
+        } else {
+            SegmentedRow(Modifier.fillMaxWidth()) {
+                ReviewCategory.entries.forEach { category ->
+                    ReviewCategorySegment(category, selected, onChange, Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewCategorySegment(
+    category: ReviewCategory,
+    selected: ReviewCategory,
+    onChange: (ReviewCategory) -> Unit,
+    modifier: Modifier,
+) {
+    val label = when (category) {
+        ReviewCategory.WORDS -> "单词复习"
+        ReviewCategory.QUESTIONS -> "题库练习"
+        ReviewCategory.CONTRAST -> "对照练习"
+        ReviewCategory.WRONG_BOOK -> "错题本"
+    }
+    val icon = when (category) {
+        ReviewCategory.WORDS -> NvvIcons.BrainCircuit
+        ReviewCategory.QUESTIONS -> NvvIcons.FileQuestion
+        ReviewCategory.CONTRAST -> NvvIcons.Sparkles
+        ReviewCategory.WRONG_BOOK -> NvvIcons.Bookmark
+    }
+    ModeSegment(
+        modifier = modifier,
+        selected = category == selected,
+        onClick = { onChange(category) },
+        label = label,
+        icon = icon,
+    )
+}
+
+@Composable
+private fun AdministratorModeToggle(
+    administratorMode: Boolean,
+    onChange: (Boolean) -> Unit,
+) {
+    SectionCard {
+        SelectionRow(onClick = { onChange(!administratorMode) }, spacing = 10.dp) {
+            Checkbox(checked = administratorMode, onCheckedChange = null)
+            Column(Modifier.weight(1f)) {
+                Text("管理员模式", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "答题时显示正确答案，适合对照背诵翻译。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -286,8 +351,11 @@ private fun QuizReviewPanel(
     var started by remember { mutableStateOf(false) }
     var finished by remember { mutableStateOf(false) }
     var showBankManager by remember { mutableStateOf(false) }
+    var showBankPreview by remember { mutableStateOf(false) }
+    var previewQuestions by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var configurationError by remember { mutableStateOf<String?>(null) }
     val selectedBank = banks.firstOrNull { it.id == selectedBankId }
+    val wrongQuestions by viewModel.wrongQuestions.collectAsStateWithLifecycle()
     val xmlLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importQuizXml)
     }
@@ -351,6 +419,22 @@ private fun QuizReviewPanel(
                         icon = NvvIcons.FileQuestion,
                         onChange = { selectedBankId = it },
                     )
+                    OutlinedButton(
+                        onClick = {
+                            selectedBank?.let { bank ->
+                                viewModel.loadQuizQuestions(bank.id) { questions ->
+                                    previewQuestions = questions
+                                    showBankPreview = true
+                                }
+                            }
+                        },
+                        enabled = selectedBank != null,
+                        shape = CircleShape,
+                        modifier = Modifier.align(Alignment.End),
+                    ) {
+                        Icon(NvvIcons.Eye, null)
+                        Text("预览题库", Modifier.padding(start = 8.dp))
+                    }
                     SegmentedRow(Modifier.fillMaxWidth()) {
                         ModeSegment(
                             modifier = Modifier.weight(1f),
@@ -389,12 +473,9 @@ private fun QuizReviewPanel(
                             label = "随机抽取数量",
                         )
                     }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onAdministratorModeChange(!administratorMode) },
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    SelectionRow(
+                        onClick = { onAdministratorModeChange(!administratorMode) },
+                        spacing = 10.dp,
                     ) {
                         Checkbox(checked = administratorMode, onCheckedChange = null)
                         Column(Modifier.weight(1f)) {
@@ -458,6 +539,14 @@ private fun QuizReviewPanel(
             onRename = viewModel::renameQuizBank,
             onDelete = viewModel::deleteQuizBank,
             onDismiss = { showBankManager = false },
+        )
+    }
+    if (showBankPreview) {
+        QuizPreviewDialog(
+            bankName = selectedBank?.displayName().orEmpty(),
+            questions = previewQuestions,
+            wrongQuestions = wrongQuestions,
+            onDismiss = { showBankPreview = false },
         )
     }
 }

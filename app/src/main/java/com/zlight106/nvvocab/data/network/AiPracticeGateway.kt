@@ -7,6 +7,7 @@ import com.zlight106.nvvocab.data.ContrastQuestion
 import com.zlight106.nvvocab.data.ParsedQuizQuestion
 import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.domain.AnswerPositionPlanner
 import com.zlight106.nvvocab.domain.QuizXmlParser
 import java.io.ByteArrayInputStream
@@ -84,6 +85,49 @@ class AiPracticeGateway {
             }
         }
         generated
+    }
+
+    suspend fun analyzeWrongQuestion(
+        settings: AiSettings,
+        entry: WrongQuestionEntry,
+    ): String = withContext(Dispatchers.IO) {
+        validateSettings(settings)
+        require(settings.analysisPrompt.isNotBlank()) { "请先配置错题解析提示词。" }
+        val options = entry.options.joinToString("\n") { "${it.id}. ${it.text}" }
+        val questionContext = """
+            题库：${entry.bankName}
+            题目：${entry.questionText}
+            选项：
+            $options
+            正确答案：${entry.correctAnswers.sorted().joinToString("、")}
+            历史错误次数：${entry.wrongCount}
+            历史正确次数：${entry.correctCount}
+        """.trimIndent()
+        val body = JSONObject()
+            .put("model", settings.model)
+            .put(
+                "messages",
+                JSONArray()
+                    .put(JSONObject().put("role", "system").put("content", settings.analysisPrompt))
+                    .put(JSONObject().put("role", "user").put("content", questionContext)),
+            )
+            .put("temperature", 0.2)
+            .put("max_tokens", 900)
+            .put("stream", false)
+            .apply {
+                if (settings.provider == AiProvider.DEEPSEEK) {
+                    put("thinking", JSONObject().put("type", "disabled"))
+                }
+            }
+        val response = JSONObject(executeRequest(settings, body))
+        val content = response.optJSONArray("choices")
+            ?.optJSONObject(0)
+            ?.optJSONObject("message")
+            ?.optString("content")
+            .orEmpty()
+            .trim()
+        require(content.isNotBlank()) { "AI 未返回有效的错题解析。" }
+        content
     }
 
     private fun generateBatch(

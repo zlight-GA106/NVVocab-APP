@@ -51,6 +51,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.content.ContextCompat
 import com.zlight106.nvvocab.data.AiProvider
 import com.zlight106.nvvocab.data.AiSettings
+import com.zlight106.nvvocab.data.DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.ThemeMode
 import com.zlight106.nvvocab.data.ReminderSettings
@@ -60,6 +61,7 @@ import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.DailyMemoEditor
 import com.zlight106.nvvocab.ui.components.NvvDropdown
 import com.zlight106.nvvocab.ui.components.SectionCard
+import com.zlight106.nvvocab.ui.components.SelectionRow
 import com.zlight106.nvvocab.ui.icons.NvvIcons
 import com.zlight106.nvvocab.ui.theme.ThemePreset
 import com.zlight106.nvvocab.ui.theme.themePresets
@@ -73,6 +75,9 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
     var aiApiKey by remember(state.aiSettings.apiKey) { mutableStateOf(state.aiSettings.apiKey) }
     var aiModel by remember(state.aiSettings.model) { mutableStateOf(state.aiSettings.model) }
     var aiPrompt by remember(state.aiSettings.systemPrompt) { mutableStateOf(state.aiSettings.systemPrompt) }
+    var aiAnalysisPrompt by remember(state.aiSettings.analysisPrompt) {
+        mutableStateOf(state.aiSettings.analysisPrompt)
+    }
     var dailyTarget by remember(state.dailyReviewTarget) { mutableStateOf(state.dailyReviewTarget.toString()) }
     var matchingEnabled by remember(state.reminderSettings.matchingEnabled) {
         mutableStateOf(state.reminderSettings.matchingEnabled)
@@ -210,9 +215,25 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                 value = aiPrompt,
                 onValueChange = { aiPrompt = it },
                 label = { Text("系统提示词") },
-                supportingText = { Text("后续 AI 词义解释和练习生成将统一使用此提示词。") },
+                supportingText = { Text("AI 对照练习生成将使用此提示词。") },
                 shape = MaterialTheme.shapes.extraLarge,
             )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
+                value = aiAnalysisPrompt,
+                onValueChange = { aiAnalysisPrompt = it },
+                label = { Text("错题解析提示词") },
+                supportingText = { Text("错题本中的 AI 解析会使用此提示词。") },
+                shape = MaterialTheme.shapes.extraLarge,
+            )
+            OutlinedButton(
+                onClick = { aiAnalysisPrompt = DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT },
+                shape = CircleShape,
+                modifier = Modifier.align(Alignment.End),
+            ) {
+                Icon(NvvIcons.RefreshCw, contentDescription = null)
+                Text("恢复默认提示词", Modifier.padding(start = 8.dp))
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -227,6 +248,7 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                                 apiKey = aiApiKey,
                                 model = aiModel,
                                 systemPrompt = aiPrompt,
+                                analysisPrompt = aiAnalysisPrompt,
                             ),
                         )
                     },
@@ -245,10 +267,12 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                                 apiKey = aiApiKey,
                                 model = aiModel,
                                 systemPrompt = aiPrompt,
+                                analysisPrompt = aiAnalysisPrompt,
                             ),
                         )
                     },
-                    enabled = aiBaseUrl.isNotBlank() && aiModel.isNotBlank() && aiPrompt.isNotBlank(),
+                    enabled = aiBaseUrl.isNotBlank() && aiModel.isNotBlank() &&
+                        aiPrompt.isNotBlank() && aiAnalysisPrompt.isNotBlank(),
                     shape = CircleShape,
                     modifier = Modifier.padding(start = 8.dp),
                 ) { Text("保存 AI 设置") }
@@ -566,11 +590,7 @@ private fun ReminderCheckRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    SelectionRow(onClick = { onCheckedChange(!checked) }) {
         Checkbox(checked = checked, onCheckedChange = null)
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
@@ -594,11 +614,7 @@ private fun ExpandableSettingCard(
     var expanded by remember { mutableStateOf(false) }
     SectionCard {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+            SelectionRow(onClick = { expanded = !expanded }) {
                 Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
                 Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 Icon(NvvIcons.ChevronDown, null)
@@ -621,11 +637,7 @@ private fun SettingSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
+    SelectionRow(onClick = { onCheckedChange(!checked) }, spacing = 16.dp) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall)
             description?.let {
