@@ -2,6 +2,7 @@ package com.zlight106.nvvocab.domain
 
 import com.zlight106.nvvocab.data.PracticeRangeMode
 import com.zlight106.nvvocab.data.ProficiencyBand
+import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.WordEntry
 
 object ContrastPracticePlanner {
@@ -11,8 +12,10 @@ object ContrastPracticePlanner {
         selectedTag: String?,
         proficiencyBand: ProficiencyBand,
         selectedWordIds: Set<String>,
+        sort: QueueSort = QueueSort.LATEST,
         now: Long = System.currentTimeMillis(),
-    ): List<WordEntry> = words.asSequence()
+    ): List<WordEntry> {
+        val filtered = words.asSequence()
         .filter { word ->
             when (rangeMode) {
                 PracticeRangeMode.ALL -> true
@@ -28,6 +31,14 @@ object ContrastPracticePlanner {
                 PracticeRangeMode.CUSTOM -> word.id in selectedWordIds
             }
         }
-        .sortedWith(compareByDescending<WordEntry> { it.introTime }.thenByDescending { it.id })
         .toList()
+        return when (sort) {
+            QueueSort.EARLIEST -> filtered.sortedBy(WordEntry::introTime)
+            QueueSort.LATEST -> filtered.sortedByDescending(WordEntry::introTime)
+            QueueSort.PROFICIENCY_LOW -> filtered.sortedBy { ProficiencyCalculator.calculate(it, now).score }
+            QueueSort.PROFICIENCY_HIGH -> filtered.sortedByDescending { ProficiencyCalculator.calculate(it, now).score }
+            QueueSort.WRONG_COUNT -> filtered.sortedByDescending(WordEntry::wrongCount)
+            QueueSort.RANDOM -> filtered.shuffled()
+        }
+    }
 }

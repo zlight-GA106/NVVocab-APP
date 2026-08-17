@@ -408,8 +408,25 @@ enum class QueueSort {
     LATEST,
     PROFICIENCY_LOW,
     PROFICIENCY_HIGH,
+    WRONG_COUNT,
     RANDOM,
 }
+
+data class WordReviewPreferences(
+    val mode: DictationMode = DictationMode.REVIEW,
+    val selectedTag: String? = null,
+    val sort: QueueSort = QueueSort.PROFICIENCY_LOW,
+    val limitText: String = "",
+)
+
+data class QuizReviewPreferences(
+    val selectedBankId: String? = null,
+    val queueMode: QuizQueueMode = QuizQueueMode.SEQUENTIAL,
+    val rangeStart: String = "1",
+    val rangeEnd: String = "",
+    val randomCount: String = "20",
+    val randomizeOptions: Boolean = false,
+)
 
 enum class SyncMode {
     ON_LOCAL_CHANGE,

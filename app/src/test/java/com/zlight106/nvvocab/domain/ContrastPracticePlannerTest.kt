@@ -2,6 +2,7 @@ package com.zlight106.nvvocab.domain
 
 import com.zlight106.nvvocab.data.PracticeRangeMode
 import com.zlight106.nvvocab.data.ProficiencyBand
+import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.WordEntry
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -43,7 +44,33 @@ class ContrastPracticePlannerTest {
         assertEquals(listOf("one"), result.map(WordEntry::id))
     }
 
-    private fun word(id: String, tag: String, introTime: Long): WordEntry = WordEntry(
+    @Test
+    fun wrongCountSortPlacesFrequentlyMissedWordsFirst() {
+        val words = listOf(
+            word("low", "A", 300L, wrongCount = 1),
+            word("high", "A", 100L, wrongCount = 7),
+            word("medium", "A", 200L, wrongCount = 3),
+        )
+
+        val result = ContrastPracticePlanner.selectWords(
+            words = words,
+            rangeMode = PracticeRangeMode.ALL,
+            selectedTag = null,
+            proficiencyBand = ProficiencyBand.LOW,
+            selectedWordIds = emptySet(),
+            sort = QueueSort.WRONG_COUNT,
+            now = 1_000L,
+        )
+
+        assertEquals(listOf("high", "medium", "low"), result.map(WordEntry::id))
+    }
+
+    private fun word(
+        id: String,
+        tag: String,
+        introTime: Long,
+        wrongCount: Int = 0,
+    ): WordEntry = WordEntry(
         id = id,
         userId = null,
         spelling = id,
@@ -55,7 +82,7 @@ class ContrastPracticePlannerTest {
         intervalDays = 1,
         easiness = 2.5,
         nextReviewAt = 0L,
-        wrongCount = 0,
+        wrongCount = wrongCount,
         dirty = false,
     )
 }

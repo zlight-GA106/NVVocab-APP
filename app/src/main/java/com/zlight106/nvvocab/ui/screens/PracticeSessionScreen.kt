@@ -357,7 +357,7 @@ private fun QuizSession(
     var records by remember(queue, wrongBookSession) { mutableStateOf<List<QuizResultRecord>>(emptyList()) }
     var finished by remember(queue, wrongBookSession) { mutableStateOf(false) }
     var settling by remember(queue, wrongBookSession) { mutableStateOf(false) }
-    var showWrongAnswers by remember(queue) { mutableStateOf(false) }
+    var showWrongAnswers by remember(queue, finished) { mutableStateOf(false) }
 
     SessionBody {
         if (finished) {

@@ -47,6 +47,7 @@ import com.zlight106.nvvocab.data.ContrastQuestion
 import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.PracticeRangeMode
 import com.zlight106.nvvocab.data.ProficiencyBand
+import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.domain.ContrastPracticePlanner
 import com.zlight106.nvvocab.ui.MainViewModel
@@ -79,6 +80,7 @@ fun ContrastPracticePanel(
     var selectedTag by remember { mutableStateOf<String?>(null) }
     var proficiencyBand by remember { mutableStateOf(ProficiencyBand.LOW) }
     var selectedWordIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var sort by remember { mutableStateOf(QueueSort.LATEST) }
     var optionCountText by remember { mutableStateOf(initialPreset.optionCount.toString()) }
     var questionCountText by remember { mutableStateOf(initialPreset.questionCount.toString()) }
     var timeLimitText by remember { mutableStateOf(initialPreset.timeLimitSeconds.toString()) }
@@ -94,13 +96,14 @@ fun ContrastPracticePanel(
     var started by remember { mutableStateOf(false) }
     var finished by remember { mutableStateOf(false) }
 
-    val scopedWords = remember(words, rangeMode, selectedTag, proficiencyBand, selectedWordIds) {
+    val scopedWords = remember(words, rangeMode, selectedTag, proficiencyBand, selectedWordIds, sort) {
         ContrastPracticePlanner.selectWords(
             words = words,
             rangeMode = rangeMode,
             selectedTag = selectedTag,
             proficiencyBand = proficiencyBand,
             selectedWordIds = selectedWordIds,
+            sort = sort,
         )
     }
     val availableChoiceCount = remember(words, type) {
@@ -244,8 +247,22 @@ fun ContrastPracticePanel(
                     }
                     PracticeRangeMode.ALL -> Unit
                 }
+                NvvDropdown(
+                    label = "排序方式",
+                    value = sort,
+                    options = listOf(
+                        QueueSort.WRONG_COUNT to "根据错误次数排序",
+                        QueueSort.PROFICIENCY_LOW to "熟练度从低到高",
+                        QueueSort.PROFICIENCY_HIGH to "熟练度从高到低",
+                        QueueSort.LATEST to "最近导入优先",
+                        QueueSort.EARLIEST to "最早导入优先",
+                        QueueSort.RANDOM to "随机排序",
+                    ),
+                    icon = NvvIcons.RefreshCw,
+                    onChange = { sort = it; started = false; finished = false },
+                )
                 Text(
-                    "当前范围 ${scopedWords.size} 词，默认按最近导入优先生成；题量超出范围时按实际词数生成。",
+                    "当前范围 ${scopedWords.size} 词，题量超出范围时按实际词数生成。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Row(

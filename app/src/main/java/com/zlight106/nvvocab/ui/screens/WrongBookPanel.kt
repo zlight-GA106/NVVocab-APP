@@ -14,7 +14,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -52,7 +51,7 @@ fun WrongBookPanel(
     val entries by viewModel.wrongQuestions.collectAsStateWithLifecycle()
     val analyzingId by viewModel.analyzingWrongQuestionId.collectAsStateWithLifecycle()
     var view by remember { mutableStateOf(WrongBookView.ERRORS) }
-    var sort by remember { mutableStateOf(WrongQuestionSort.PROFICIENCY_LOW) }
+    var sort by remember { mutableStateOf(WrongQuestionSort.WRONG_COUNT) }
     val visible = remember(entries, view, sort) {
         entries.asSequence()
             .filter { view == WrongBookView.ERRORS || it.favorite }
@@ -162,9 +161,7 @@ private fun WrongSortDropdown(
         label = "排序方式",
         value = value,
         options = listOf(
-            WrongQuestionSort.PROFICIENCY_LOW to "熟练度从低到高",
-            WrongQuestionSort.PROFICIENCY_HIGH to "熟练度从高到低",
-            WrongQuestionSort.WRONG_COUNT to "错误次数最多优先",
+            WrongQuestionSort.WRONG_COUNT to "根据错误次数排序",
             WrongQuestionSort.LATEST to "最近错误优先",
         ),
         icon = NvvIcons.RefreshCw,
@@ -222,14 +219,27 @@ private fun WrongQuestionCard(
                     )
                 }
             }
-            Text(
-                "错误 ${entry.wrongCount} 次 · 正确 ${entry.correctCount} 次 · 熟练度 ${entry.proficiencyPercent}%",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            LinearProgressIndicator(
-                progress = { entry.proficiencyPercent / 100f },
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-            )
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ) {
+                    Text(
+                        "错误次数 ${entry.wrongCount}",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Text(
+                    "正确 ${entry.correctCount} 次",
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             QuestionOptionDetails(
                 options = entry.options,
                 correctAnswers = entry.correctAnswers,

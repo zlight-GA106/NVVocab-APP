@@ -59,8 +59,10 @@ import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.QuizQuestion
 import com.zlight106.nvvocab.data.QuizQueueMode
+import com.zlight106.nvvocab.data.QuizReviewPreferences
 import com.zlight106.nvvocab.data.ReviewCategory
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.WordReviewPreferences
 import com.zlight106.nvvocab.data.formatOptionAnswers
 import com.zlight106.nvvocab.domain.QuizOptionRandomizer
 import com.zlight106.nvvocab.ui.MainViewModel
@@ -90,7 +92,8 @@ fun DictateScreen(
     onAdministratorModeChange: (Boolean) -> Unit,
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
-    var category by remember { mutableStateOf(ReviewCategory.WORDS) }
+    val appState by viewModel.uiState.collectAsStateWithLifecycle()
+    val category = appState.reviewCategory
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(
@@ -102,18 +105,24 @@ fun DictateScreen(
             "在单词拼写、本地题库与 AI 对照练习之间切换。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        ReviewCategorySelector(category, onChange = { category = it })
+        ReviewCategorySelector(category, onChange = viewModel::setReviewCategory)
         AnimatedContent(
             targetState = category,
             transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
             label = "review-category",
         ) { selectedCategory ->
             when (selectedCategory) {
-                ReviewCategory.WORDS -> WordReviewPanel(viewModel, tags, onStartSession)
+                ReviewCategory.WORDS -> WordReviewPanel(
+                    viewModel = viewModel,
+                    tags = tags,
+                    initialPreferences = appState.wordReviewPreferences,
+                    onStartSession = onStartSession,
+                )
                 ReviewCategory.QUESTIONS -> QuizReviewPanel(
                     viewModel = viewModel,
                     banks = quizBanks,
                     administratorMode = administratorMode,
+                    initialPreferences = appState.quizReviewPreferences,
                     onAdministratorModeChange = onAdministratorModeChange,
                     onStartSession = onStartSession,
                 )
@@ -210,16 +219,28 @@ private fun AdministratorModeToggle(
 private fun WordReviewPanel(
     viewModel: MainViewModel,
     tags: List<String>,
+    initialPreferences: WordReviewPreferences,
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
-    var mode by remember { mutableStateOf(DictationMode.REVIEW) }
-    var selectedTag by remember { mutableStateOf<String?>(null) }
-    var sort by remember { mutableStateOf(QueueSort.PROFICIENCY_LOW) }
-    var limitText by remember { mutableStateOf("") }
+    var mode by remember { mutableStateOf(initialPreferences.mode) }
+    var selectedTag by remember { mutableStateOf(initialPreferences.selectedTag) }
+    var sort by remember { mutableStateOf(initialPreferences.sort) }
+    var limitText by remember { mutableStateOf(initialPreferences.limitText) }
     var queue by remember { mutableStateOf<List<WordEntry>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
     var started by remember { mutableStateOf(false) }
     var completed by remember { mutableStateOf(false) }
+
+    fun persist() {
+        viewModel.saveWordReviewPreferences(
+            WordReviewPreferences(
+                mode = mode,
+                selectedTag = selectedTag,
+                sort = sort,
+                limitText = limitText,
+            ),
+        )
+    }
 
     val restart = {
         val preparedQueue = viewModel.buildQueue(mode, selectedTag, sort, limitText.toIntOrNull())
@@ -241,14 +262,24 @@ private fun WordReviewPanel(
             ModeSegment(
                 modifier = Modifier.weight(1f),
                 selected = mode == DictationMode.REVIEW,
-                onClick = { mode = DictationMode.REVIEW; started = false; completed = false },
+                onClick = {
+                    mode = DictationMode.REVIEW
+                    started = false
+                    completed = false
+                    persist()
+                },
                 label = "复习模式",
                 icon = NvvIcons.BrainCircuit,
             )
             ModeSegment(
                 modifier = Modifier.weight(1f),
                 selected = mode == DictationMode.PRACTICE,
-                onClick = { mode = DictationMode.PRACTICE; started = false; completed = false },
+                onClick = {
+                    mode = DictationMode.PRACTICE
+                    started = false
+                    completed = false
+                    persist()
+                },
                 label = "练习模式",
                 icon = NvvIcons.Keyboard,
             )
@@ -266,7 +297,11 @@ private fun WordReviewPanel(
                             null to if (mode == DictationMode.REVIEW) "全部到期词库" else "全部词库",
                         ) + tags.map { it to it },
                         icon = NvvIcons.Tags,
-                        onChange = { selectedTag = it; started = false },
+                        onChange = {
+                            selectedTag = it
+                            started = false
+                            persist()
+                        },
                         modifier = Modifier.weight(1f),
                         compact = true,
                     )
@@ -276,12 +311,17 @@ private fun WordReviewPanel(
                         options = listOf(
                             QueueSort.PROFICIENCY_LOW to "熟练度从低到高",
                             QueueSort.PROFICIENCY_HIGH to "熟练度从高到低",
+                            QueueSort.WRONG_COUNT to "根据错误次数排序",
                             QueueSort.EARLIEST to "最早导入优先",
                             QueueSort.LATEST to "最近导入优先",
                             QueueSort.RANDOM to "随机乱序",
                         ),
                         icon = NvvIcons.RefreshCw,
-                        onChange = { sort = it; started = false },
+                        onChange = {
+                            sort = it
+                            started = false
+                            persist()
+                        },
                         modifier = Modifier.weight(1f),
                         compact = true,
                     )
@@ -289,7 +329,10 @@ private fun WordReviewPanel(
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = limitText,
-                    onValueChange = { input -> limitText = input.filter(Char::isDigit).take(3) },
+                    onValueChange = { input ->
+                        limitText = input.filter(Char::isDigit).take(3)
+                        persist()
+                    },
                     label = { Text("本次数量") },
                     placeholder = { Text("系统自动计算，上限 100") },
                     singleLine = true,
@@ -340,15 +383,16 @@ private fun QuizReviewPanel(
     viewModel: MainViewModel,
     banks: List<QuizBank>,
     administratorMode: Boolean,
+    initialPreferences: QuizReviewPreferences,
     onAdministratorModeChange: (Boolean) -> Unit,
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
-    var selectedBankId by remember { mutableStateOf<String?>(null) }
-    var queueMode by remember { mutableStateOf(QuizQueueMode.SEQUENTIAL) }
-    var rangeStart by remember { mutableStateOf("1") }
-    var rangeEnd by remember { mutableStateOf("") }
-    var randomCount by remember { mutableStateOf("20") }
-    var randomizeOptions by remember { mutableStateOf(false) }
+    var selectedBankId by remember { mutableStateOf(initialPreferences.selectedBankId) }
+    var queueMode by remember { mutableStateOf(initialPreferences.queueMode) }
+    var rangeStart by remember { mutableStateOf(initialPreferences.rangeStart) }
+    var rangeEnd by remember { mutableStateOf(initialPreferences.rangeEnd) }
+    var randomCount by remember { mutableStateOf(initialPreferences.randomCount) }
+    var randomizeOptions by remember { mutableStateOf(initialPreferences.randomizeOptions) }
     var queue by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
     var records by remember { mutableStateOf<List<QuizAnswerRecord>>(emptyList()) }
@@ -358,17 +402,49 @@ private fun QuizReviewPanel(
     var showBankPreview by remember { mutableStateOf(false) }
     var previewQuestions by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var configurationError by remember { mutableStateOf<String?>(null) }
+    var pendingExportBankId by remember { mutableStateOf<String?>(null) }
     val selectedBank = banks.firstOrNull { it.id == selectedBankId }
     val wrongQuestions by viewModel.wrongQuestions.collectAsStateWithLifecycle()
     val xmlLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importQuizXml)
     }
+    val xmlExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/xml"),
+    ) { uri ->
+        val bankId = pendingExportBankId
+        pendingExportBankId = null
+        if (uri != null && bankId != null) viewModel.exportQuizBank(bankId, uri)
+    }
+
+    fun persist() {
+        viewModel.saveQuizReviewPreferences(
+            QuizReviewPreferences(
+                selectedBankId = selectedBankId,
+                queueMode = queueMode,
+                rangeStart = rangeStart,
+                rangeEnd = rangeEnd,
+                randomCount = randomCount,
+                randomizeOptions = randomizeOptions,
+            ),
+        )
+    }
 
     LaunchedEffect(banks) {
-        if (banks.none { it.id == selectedBankId }) selectedBankId = banks.firstOrNull()?.id
+        if (banks.none { it.id == selectedBankId }) {
+            selectedBankId = banks.firstOrNull()?.id
+            rangeStart = "1"
+            rangeEnd = banks.firstOrNull()?.questionCount?.toString().orEmpty()
+            persist()
+        }
     }
-    LaunchedEffect(selectedBankId) {
-        selectedBank?.let { rangeEnd = it.questionCount.toString() }
+    LaunchedEffect(selectedBankId, selectedBank?.questionCount) {
+        selectedBank?.let { bank ->
+            val end = rangeEnd.toIntOrNull()
+            if (end == null || end > bank.questionCount) {
+                rangeEnd = bank.questionCount.toString()
+                persist()
+            }
+        }
         started = false
         finished = false
         configurationError = null
@@ -426,36 +502,66 @@ private fun QuizReviewPanel(
                         value = selectedBankId,
                         options = banks.map { it.id as String? to "${it.displayName()}（${it.questionCount} 题）" },
                         icon = NvvIcons.FileQuestion,
-                        onChange = { selectedBankId = it },
-                    )
-                    OutlinedButton(
-                        onClick = {
-                            selectedBank?.let { bank ->
-                                viewModel.loadQuizQuestions(bank.id) { questions ->
-                                    previewQuestions = questions
-                                    showBankPreview = true
-                                }
-                            }
+                        onChange = { bankId ->
+                            selectedBankId = bankId
+                            rangeStart = "1"
+                            rangeEnd = banks.firstOrNull { it.id == bankId }?.questionCount?.toString().orEmpty()
+                            persist()
                         },
-                        enabled = selectedBank != null,
-                        shape = CircleShape,
+                    )
+                    Row(
                         modifier = Modifier.align(Alignment.End),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(NvvIcons.Eye, null)
-                        Text("预览题库", Modifier.padding(start = 8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                selectedBank?.let { bank ->
+                                    pendingExportBankId = bank.id
+                                    xmlExportLauncher.launch("${bank.safeFileName()}.xml")
+                                }
+                            },
+                            enabled = selectedBank != null,
+                            shape = CircleShape,
+                        ) {
+                            Icon(NvvIcons.Download, null)
+                            Text("导出 XML", Modifier.padding(start = 6.dp))
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                selectedBank?.let { bank ->
+                                    viewModel.loadQuizQuestions(bank.id) { questions ->
+                                        previewQuestions = questions
+                                        showBankPreview = true
+                                    }
+                                }
+                            },
+                            enabled = selectedBank != null,
+                            shape = CircleShape,
+                        ) {
+                            Icon(NvvIcons.Eye, null)
+                            Text("预览题库", Modifier.padding(start = 6.dp))
+                        }
                     }
                     SegmentedRow(Modifier.fillMaxWidth()) {
                         ModeSegment(
                             modifier = Modifier.weight(1f),
                             selected = queueMode == QuizQueueMode.SEQUENTIAL,
-                            onClick = { queueMode = QuizQueueMode.SEQUENTIAL; started = false },
+                            onClick = {
+                                queueMode = QuizQueueMode.SEQUENTIAL
+                                started = false
+                                persist()
+                            },
                             label = "顺序练习",
                             icon = NvvIcons.ListChecks,
                         )
                         ModeSegment(
                             modifier = Modifier.weight(1f),
                             selected = queueMode == QuizQueueMode.RANDOM,
-                            onClick = { queueMode = QuizQueueMode.RANDOM; started = false },
+                            onClick = {
+                                queueMode = QuizQueueMode.RANDOM
+                                started = false
+                                persist()
+                            },
                             label = "随机抽题",
                             icon = NvvIcons.RefreshCw,
                         )
@@ -464,13 +570,13 @@ private fun QuizReviewPanel(
                         NumberField(
                             modifier = Modifier.weight(1f),
                             value = rangeStart,
-                            onValueChange = { rangeStart = it },
+                            onValueChange = { rangeStart = it; persist() },
                             label = "起始题号",
                         )
                         NumberField(
                             modifier = Modifier.weight(1f),
                             value = rangeEnd,
-                            onValueChange = { rangeEnd = it },
+                            onValueChange = { rangeEnd = it; persist() },
                             label = "结束题号",
                         )
                     }
@@ -478,12 +584,15 @@ private fun QuizReviewPanel(
                         NumberField(
                             modifier = Modifier.fillMaxWidth(),
                             value = randomCount,
-                            onValueChange = { randomCount = it },
+                            onValueChange = { randomCount = it; persist() },
                             label = "随机抽取数量",
                         )
                     }
                     SelectionRow(
-                        onClick = { randomizeOptions = !randomizeOptions },
+                        onClick = {
+                            randomizeOptions = !randomizeOptions
+                            persist()
+                        },
                         spacing = 10.dp,
                     ) {
                         Checkbox(checked = randomizeOptions, onCheckedChange = null)
@@ -797,6 +906,11 @@ private fun QuizBank.formattedTimestamp(): String = QUIZ_BANK_TIMESTAMP_FORMAT.f
     Instant.ofEpochMilli(importedAt).atZone(ZoneId.systemDefault()),
 )
 
+private fun QuizBank.safeFileName(): String = displayName()
+    .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    .trim()
+    .ifBlank { "题库" }
+
 private val AI_QUIZ_NAME_PATTERN = Regex("^(.+?)\\s+\\d{8}-\\d{6}(?:-\\d{1,3})?$")
 private val QUIZ_BANK_TIMESTAMP_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")
 
@@ -924,36 +1038,51 @@ private fun QuizResultPanel(records: List<QuizAnswerRecord>, onRestart: () -> Un
     val correctCount = records.count(QuizAnswerRecord::correct)
     val totalScore = records.sumOf { if (it.correct) it.question.score else 0 }
     val possibleScore = records.sumOf { it.question.score }
+    val wrongRecords = records.filterNot(QuizAnswerRecord::correct)
+    var showWrongAnswers by remember(records) { mutableStateOf(false) }
     SectionCard {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(NvvIcons.Check, null, tint = MaterialTheme.colorScheme.primary)
             Text("答题结算", style = MaterialTheme.typography.headlineSmall)
             Text("正确 $correctCount / ${records.size}", style = MaterialTheme.typography.titleLarge)
             Text("得分 $totalScore / $possibleScore", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            records.filterNot(QuizAnswerRecord::correct).forEach { record ->
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f),
-                ) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("第 ${record.question.originalIndex + 1} 题", color = MaterialTheme.colorScheme.error)
-                        Text(record.question.text)
-                        Text(
-                            "你的答案：${formatOptionAnswers(record.question.options, record.selectedAnswers)}",
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                        Text(
-                            "正确答案：${formatOptionAnswers(record.question.options, record.question.answers)}",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        QuestionOptionDetails(
-                            options = record.question.options,
-                            correctAnswers = record.question.answers,
-                            selectedAnswers = record.selectedAnswers,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+            OutlinedButton(
+                onClick = { showWrongAnswers = !showWrongAnswers },
+                enabled = wrongRecords.isNotEmpty(),
+                shape = CircleShape,
+            ) {
+                Icon(NvvIcons.Eye, null)
+                Text(
+                    if (showWrongAnswers) "收起错题" else "显示错题（${wrongRecords.size}）",
+                    Modifier.padding(start = 8.dp),
+                )
+            }
+            if (showWrongAnswers) {
+                wrongRecords.forEach { record ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f),
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("第 ${record.question.originalIndex + 1} 题", color = MaterialTheme.colorScheme.error)
+                            Text(record.question.text)
+                            Text(
+                                "你的答案：${formatOptionAnswers(record.question.options, record.selectedAnswers)}",
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            Text(
+                                "正确答案：${formatOptionAnswers(record.question.options, record.question.answers)}",
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            QuestionOptionDetails(
+                                options = record.question.options,
+                                correctAnswers = record.question.answers,
+                                selectedAnswers = record.selectedAnswers,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }

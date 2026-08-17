@@ -30,6 +30,7 @@ import com.zlight106.nvvocab.data.network.AuthOutcome
 import com.zlight106.nvvocab.data.network.SupabaseGateway
 import com.zlight106.nvvocab.domain.ProficiencyCalculator
 import com.zlight106.nvvocab.domain.QuizXmlParser
+import com.zlight106.nvvocab.domain.QuizXmlWriter
 import com.zlight106.nvvocab.domain.ReviewCadence
 import java.io.OutputStream
 import java.io.InputStream
@@ -131,6 +132,7 @@ class VocabularyRepository(
             QueueSort.LATEST -> filtered.sortedByDescending(WordEntry::introTime)
             QueueSort.PROFICIENCY_LOW -> filtered.sortedBy { ProficiencyCalculator.calculate(it, now).score }
             QueueSort.PROFICIENCY_HIGH -> filtered.sortedByDescending { ProficiencyCalculator.calculate(it, now).score }
+            QueueSort.WRONG_COUNT -> filtered.sortedByDescending(WordEntry::wrongCount)
             QueueSort.RANDOM -> filtered.shuffled()
         }
         return sorted.take(limit?.coerceIn(1, 500) ?: 100)
@@ -181,6 +183,10 @@ class VocabularyRepository(
 
     suspend fun getQuizQuestions(bankId: String): List<QuizQuestion> = withContext(Dispatchers.IO) {
         database.getQuizQuestions(bankId)
+    }
+
+    suspend fun exportQuizBank(bankId: String, output: OutputStream) = withContext(Dispatchers.IO) {
+        QuizXmlWriter.write(database.getQuizQuestions(bankId), output)
     }
 
     suspend fun recordQuizAttempt(attempt: QuizAttempt) = withContext(Dispatchers.IO) {

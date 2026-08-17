@@ -22,13 +22,16 @@ import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.QuizAttempt
 import com.zlight106.nvvocab.data.QuizQuestion
+import com.zlight106.nvvocab.data.QuizReviewPreferences
 import com.zlight106.nvvocab.data.ReminderSettings
+import com.zlight106.nvvocab.data.ReviewCategory
 import com.zlight106.nvvocab.data.SupabaseConfig
 import com.zlight106.nvvocab.data.SyncMode
 import com.zlight106.nvvocab.data.SyncSettings
 import com.zlight106.nvvocab.data.ThemeMode
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.WordReviewPreferences
 import com.zlight106.nvvocab.ui.screens.PracticeSessionRequest
 import com.zlight106.nvvocab.data.repository.VocabularyRepository
 import com.zlight106.nvvocab.domain.WordTextParser
@@ -53,12 +56,15 @@ data class AppUiState(
     val dynamicColor: Boolean,
     val message: String? = null,
     val reminderSettings: ReminderSettings,
+    val reviewCategory: ReviewCategory,
+    val quizReviewPreferences: QuizReviewPreferences,
     val session: AuthSession?,
     val supabaseConfig: SupabaseConfig,
     val syncSettings: SyncSettings,
     val syncing: Boolean = false,
     val themeMode: ThemeMode,
     val themePresetId: String?,
+    val wordReviewPreferences: WordReviewPreferences,
 )
 
 class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
@@ -200,6 +206,20 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
                     onFailure()
                     showMessage(it.message ?: "本轮答题结算失败")
                 }
+        }
+    }
+
+    fun exportQuizBank(bankId: String, uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                application.contentResolver.openOutputStream(uri, "w")?.use { output ->
+                    repository.exportQuizBank(bankId, output)
+                } ?: error("无法写入所选文件。")
+            }.onSuccess {
+                showMessage("题库 XML 已导出")
+            }.onFailure {
+                showMessage(it.message ?: "题库导出失败")
+            }
         }
     }
 
@@ -369,6 +389,21 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         mutableUiState.value = readUiState()
     }
 
+    fun setReviewCategory(category: ReviewCategory) {
+        preferences.saveReviewCategory(category)
+        mutableUiState.value = readUiState()
+    }
+
+    fun saveWordReviewPreferences(value: WordReviewPreferences) {
+        preferences.saveWordReviewPreferences(value)
+        mutableUiState.value = readUiState()
+    }
+
+    fun saveQuizReviewPreferences(value: QuizReviewPreferences) {
+        preferences.saveQuizReviewPreferences(value)
+        mutableUiState.value = readUiState()
+    }
+
     fun setThemePreset(id: String?) {
         preferences.saveThemePresetId(id)
         preferences.setDynamicColorEnabled(id == null)
@@ -474,12 +509,15 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         dynamicColor = preferences.isDynamicColorEnabled(),
         message = message,
         reminderSettings = preferences.readReminderSettings(),
+        reviewCategory = preferences.readReviewCategory(),
+        quizReviewPreferences = preferences.readQuizReviewPreferences(),
         session = preferences.readSession(),
         supabaseConfig = preferences.readSupabaseConfig(),
         syncSettings = preferences.readSyncSettings(),
         syncing = false,
         themeMode = preferences.readThemeMode(),
         themePresetId = preferences.readThemePresetId(),
+        wordReviewPreferences = preferences.readWordReviewPreferences(),
     )
 
     class Factory(private val application: NvvocabApplication) : ViewModelProvider.Factory {

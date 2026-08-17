@@ -155,6 +155,55 @@ class AppPreferences(context: Context) {
         preferences.edit().putString(KEY_THEME_PRESET, id).apply()
     }
 
+    fun readReviewCategory(): ReviewCategory = readEnum(
+        key = KEY_REVIEW_CATEGORY,
+        fallback = ReviewCategory.WORDS,
+    )
+
+    fun saveReviewCategory(category: ReviewCategory) {
+        preferences.edit().putString(KEY_REVIEW_CATEGORY, category.name).apply()
+    }
+
+    fun readWordReviewPreferences(): WordReviewPreferences = WordReviewPreferences(
+        mode = readEnum(KEY_WORD_REVIEW_MODE, DictationMode.REVIEW),
+        selectedTag = preferences.getString(KEY_WORD_REVIEW_TAG, null),
+        sort = readEnum(KEY_WORD_REVIEW_SORT, QueueSort.PROFICIENCY_LOW),
+        limitText = preferences.getString(KEY_WORD_REVIEW_LIMIT, "").orEmpty(),
+    )
+
+    fun saveWordReviewPreferences(value: WordReviewPreferences) {
+        preferences.edit()
+            .putString(KEY_WORD_REVIEW_MODE, value.mode.name)
+            .putString(KEY_WORD_REVIEW_TAG, value.selectedTag)
+            .putString(KEY_WORD_REVIEW_SORT, value.sort.name)
+            .putString(KEY_WORD_REVIEW_LIMIT, value.limitText)
+            .apply()
+    }
+
+    fun readQuizReviewPreferences(): QuizReviewPreferences = QuizReviewPreferences(
+        selectedBankId = preferences.getString(KEY_QUIZ_REVIEW_BANK, null),
+        queueMode = readEnum(KEY_QUIZ_REVIEW_MODE, QuizQueueMode.SEQUENTIAL),
+        rangeStart = preferences.getString(KEY_QUIZ_REVIEW_START, "1").orEmpty(),
+        rangeEnd = preferences.getString(KEY_QUIZ_REVIEW_END, "").orEmpty(),
+        randomCount = preferences.getString(KEY_QUIZ_REVIEW_RANDOM_COUNT, "20").orEmpty(),
+        randomizeOptions = preferences.getBoolean(KEY_QUIZ_REVIEW_RANDOM_OPTIONS, false),
+    )
+
+    fun saveQuizReviewPreferences(value: QuizReviewPreferences) {
+        preferences.edit()
+            .putString(KEY_QUIZ_REVIEW_BANK, value.selectedBankId)
+            .putString(KEY_QUIZ_REVIEW_MODE, value.queueMode.name)
+            .putString(KEY_QUIZ_REVIEW_START, value.rangeStart)
+            .putString(KEY_QUIZ_REVIEW_END, value.rangeEnd)
+            .putString(KEY_QUIZ_REVIEW_RANDOM_COUNT, value.randomCount)
+            .putBoolean(KEY_QUIZ_REVIEW_RANDOM_OPTIONS, value.randomizeOptions)
+            .apply()
+    }
+
+    private inline fun <reified T : Enum<T>> readEnum(key: String, fallback: T): T = runCatching {
+        enumValueOf<T>(preferences.getString(key, fallback.name).orEmpty())
+    }.getOrDefault(fallback)
+
     fun readReminderSettings(): ReminderSettings = ReminderSettings(
         matchingEnabled = preferences.getBoolean(KEY_MATCHING_REMINDER, false),
         reviewEnabled = preferences.getBoolean(
@@ -392,8 +441,15 @@ class AppPreferences(context: Context) {
         const val KEY_QUESTIONS_PER_GROUP = "questions_per_group"
         const val KEY_QUESTION_GROUPS = "question_group_count"
         const val KEY_QUESTION_REMINDER = "question_reminder"
+        const val KEY_QUIZ_REVIEW_BANK = "quiz_review_bank"
+        const val KEY_QUIZ_REVIEW_END = "quiz_review_end"
+        const val KEY_QUIZ_REVIEW_MODE = "quiz_review_mode"
+        const val KEY_QUIZ_REVIEW_RANDOM_COUNT = "quiz_review_random_count"
+        const val KEY_QUIZ_REVIEW_RANDOM_OPTIONS = "quiz_review_random_options"
+        const val KEY_QUIZ_REVIEW_START = "quiz_review_start"
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_REMINDER_HOUR = "reminder_hour"
+        const val KEY_REVIEW_CATEGORY = "review_category"
         const val KEY_REVIEW_NOTIFICATION_LEGACY = "review_notification"
         const val KEY_REVIEW_REMINDER = "review_reminder"
         const val KEY_SUPABASE_KEY = "supabase_publishable_key"
@@ -406,5 +462,9 @@ class AppPreferences(context: Context) {
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_THEME_PRESET = "theme_preset"
         const val KEY_USER_ID = "user_id"
+        const val KEY_WORD_REVIEW_LIMIT = "word_review_limit"
+        const val KEY_WORD_REVIEW_MODE = "word_review_mode"
+        const val KEY_WORD_REVIEW_SORT = "word_review_sort"
+        const val KEY_WORD_REVIEW_TAG = "word_review_tag"
     }
 }
