@@ -61,7 +61,9 @@ import com.zlight106.nvvocab.data.QuizSessionAnswer
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.data.WordReviewResult
 import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.formatOptionAnswers
 import com.zlight106.nvvocab.ui.MainViewModel
+import com.zlight106.nvvocab.ui.components.QuestionOptionDetails
 import com.zlight106.nvvocab.ui.components.SectionCard
 import com.zlight106.nvvocab.ui.icons.NvvIcons
 import java.util.UUID
@@ -389,8 +391,19 @@ private fun QuizSession(
                             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(record.question.text, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "正确答案：${record.question.answers.sorted().joinToString("、")}",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    "你的答案：${formatOptionAnswers(record.question.options, record.selectedAnswers)}",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                Text(
+                                    "正确答案：${formatOptionAnswers(record.question.options, record.question.answers)}",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                QuestionOptionDetails(
+                                    options = record.question.options,
+                                    correctAnswers = record.question.answers,
+                                    selectedAnswers = record.selectedAnswers,
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
                             }
                         }
@@ -462,7 +475,7 @@ private fun QuizQuestion(
                 Column(horizontalAlignment = Alignment.End) {
                     if (showAnswer) {
                         Text(
-                            administratorAnswerText(question.answers),
+                            administratorAnswerText(question.options, question.answers),
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -508,7 +521,11 @@ private fun QuizQuestion(
             }
             if (checked) {
                 Text(
-                    if (correct) "回答正确" else "正确答案：${question.answers.sorted().joinToString("、")}",
+                    if (correct) {
+                        "回答正确"
+                    } else {
+                        "正确答案：${formatOptionAnswers(question.options, question.answers)}"
+                    },
                     color = if (correct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
             }
@@ -526,8 +543,10 @@ private fun QuizQuestion(
     }
 }
 
-internal fun administratorAnswerText(answers: Set<String>): String =
-    "答案：${answers.sorted().joinToString("、")}"
+internal fun administratorAnswerText(
+    options: List<com.zlight106.nvvocab.data.QuizOption>,
+    answers: Set<String>,
+): String = "答案：${formatOptionAnswers(options, answers)}"
 
 @Composable
 private fun ContrastSession(

@@ -8,6 +8,7 @@ import com.zlight106.nvvocab.data.ParsedQuizQuestion
 import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.formatOptionAnswers
 import com.zlight106.nvvocab.domain.AnswerPositionPlanner
 import com.zlight106.nvvocab.domain.QuizXmlParser
 import java.io.ByteArrayInputStream
@@ -94,12 +95,13 @@ class AiPracticeGateway {
         validateSettings(settings)
         require(settings.analysisPrompt.isNotBlank()) { "请先配置错题解析提示词。" }
         val options = entry.options.joinToString("\n") { "${it.id}. ${it.text}" }
+        val correctAnswerDetails = formatOptionAnswers(entry.options, entry.correctAnswers)
         val questionContext = """
             题库：${entry.bankName}
             题目：${entry.questionText}
             选项：
             $options
-            正确答案：${entry.correctAnswers.sorted().joinToString("、")}
+            正确答案：$correctAnswerDetails
             历史错误次数：${entry.wrongCount}
             历史正确次数：${entry.correctCount}
         """.trimIndent()

@@ -44,6 +44,18 @@ data class QuizOption(
     val text: String,
 )
 
+fun formatOptionAnswers(
+    options: List<QuizOption>,
+    answerIds: Set<String>,
+    emptyLabel: String = "未选择",
+): String {
+    if (answerIds.isEmpty()) return emptyLabel
+    val optionById = options.associateBy(QuizOption::id)
+    return answerIds.sorted().joinToString("；") { id ->
+        optionById[id]?.let { option -> "${option.id}. ${option.text}" } ?: id
+    }
+}
+
 data class QuizQuestion(
     val id: String,
     val bankId: String,
@@ -205,7 +217,15 @@ const val DEFAULT_AI_PROMPT = """你是单词速记应用中的英语对照练�
 
 每个目标词必须按输入顺序生成且只生成一道 question。每题只能有一个正确答案。option 的 id 必须从 A 开始连续排列，answer 必须填写正确选项的 id。选项数量必须符合用户指令并且不得重复。score 固定为 10。不要生成 password 字段。文本中的小于号、大于号、与号、引号和撇号必须按 XML 规则转义。"""
 
-const val DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT = """请分析下面这道英语学习错题。输出中文纯文本，依次说明正确答案、核心知识点、常见误区和一条便于记忆的建议。保持简洁，不要使用 Markdown 表格。"""
+const val LEGACY_DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT = """请分析下面这道英语学习错题。输出中文纯文本，依次说明正确答案、核心知识点、常见误区和一条便于记忆的建议。保持简洁，不要使用 Markdown 表格。"""
+
+const val DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT = """请分析下面这道英语学习错题。输出中文纯文本，并严格依次说明：
+1. 正确答案，必须同时写出选项编号和完整选项内容。
+2. 逐项解析，必须覆盖题目提供的每个选项，说明其含义以及正确或错误的原因。
+3. 核心知识点。
+4. 常见误区。
+5. 一条便于记忆的建议。
+保持简洁，不要使用 Markdown 表格，不要省略任何选项的正文。"""
 
 enum class ContrastPracticeType {
     CHINESE_TO_ENGLISH,

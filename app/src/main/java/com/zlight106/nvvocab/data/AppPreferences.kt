@@ -33,6 +33,17 @@ class AppPreferences(context: Context) {
             storedPrompt == LEGACY_DEFAULT_AI_PROMPT -> DEFAULT_AI_PROMPT
             else -> storedPrompt
         }
+        val storedAnalysisPrompt = preferences.getString(
+            KEY_AI_ANALYSIS_PROMPT,
+            DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT,
+        ).orEmpty().trim()
+        val resolvedAnalysisPrompt = when {
+            storedAnalysisPrompt.isBlank() -> DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT
+            storedAnalysisPrompt == LEGACY_DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT -> {
+                DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT
+            }
+            else -> storedAnalysisPrompt
+        }
         return AiSettings(
             provider = provider,
             baseUrl = preferences.getString(KEY_AI_BASE_URL, "https://api.deepseek.com")
@@ -40,10 +51,7 @@ class AppPreferences(context: Context) {
             apiKey = preferences.getString(KEY_AI_API_KEY, "").orEmpty().trim(),
             model = preferences.getString(KEY_AI_MODEL, "deepseek-v4-flash").orEmpty().trim(),
             systemPrompt = resolvedPrompt,
-            analysisPrompt = preferences.getString(
-                KEY_AI_ANALYSIS_PROMPT,
-                DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT,
-            ).orEmpty().trim().ifBlank { DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT },
+            analysisPrompt = resolvedAnalysisPrompt,
         )
     }
 

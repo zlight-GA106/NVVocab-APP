@@ -61,8 +61,11 @@ import com.zlight106.nvvocab.data.QuizQuestion
 import com.zlight106.nvvocab.data.QuizQueueMode
 import com.zlight106.nvvocab.data.ReviewCategory
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.formatOptionAnswers
+import com.zlight106.nvvocab.domain.QuizOptionRandomizer
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.NvvDropdown
+import com.zlight106.nvvocab.ui.components.QuestionOptionDetails
 import com.zlight106.nvvocab.ui.components.SectionCard
 import com.zlight106.nvvocab.ui.components.SelectionRow
 import com.zlight106.nvvocab.ui.components.SegmentedRow
@@ -345,6 +348,7 @@ private fun QuizReviewPanel(
     var rangeStart by remember { mutableStateOf("1") }
     var rangeEnd by remember { mutableStateOf("") }
     var randomCount by remember { mutableStateOf("20") }
+    var randomizeOptions by remember { mutableStateOf(false) }
     var queue by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
     var records by remember { mutableStateOf<List<QuizAnswerRecord>>(emptyList()) }
@@ -380,7 +384,7 @@ private fun QuizReviewPanel(
         }
         viewModel.loadQuizQuestions(bank.id) { allQuestions ->
             val ranged = allQuestions.filter { it.originalIndex + 1 in start..end }
-            val prepared = if (queueMode == QuizQueueMode.RANDOM) {
+            val selectedQuestions = if (queueMode == QuizQueueMode.RANDOM) {
                 val count = randomCount.toIntOrNull()
                 if (count == null || count !in 1..ranged.size) {
                     configurationError = "随机抽题数量必须位于当前题号范围内。"
@@ -389,6 +393,11 @@ private fun QuizReviewPanel(
                 ranged.shuffled().take(count)
             } else {
                 ranged
+            }
+            val prepared = if (randomizeOptions) {
+                selectedQuestions.map { question -> QuizOptionRandomizer.randomize(question) }
+            } else {
+                selectedQuestions
             }
             queue = prepared
             currentIndex = 0
@@ -472,6 +481,20 @@ private fun QuizReviewPanel(
                             onValueChange = { randomCount = it },
                             label = "随机抽取数量",
                         )
+                    }
+                    SelectionRow(
+                        onClick = { randomizeOptions = !randomizeOptions },
+                        spacing = 10.dp,
+                    ) {
+                        Checkbox(checked = randomizeOptions, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("随机选项", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "每次开始答题时随机排列选项，并自动重映射正确答案。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                     SelectionRow(
                         onClick = { onAdministratorModeChange(!administratorMode) },
@@ -869,7 +892,11 @@ private fun QuizQuestionCard(
             }
             if (checked) {
                 Text(
-                    if (correct) "回答正确" else "正确答案：${question.answers.sorted().joinToString("、")}",
+                    if (correct) {
+                        "回答正确"
+                    } else {
+                        "正确答案：${formatOptionAnswers(question.options, question.answers)}"
+                    },
                     color = if (correct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
             }
@@ -912,8 +939,21 @@ private fun QuizResultPanel(records: List<QuizAnswerRecord>, onRestart: () -> Un
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("第 ${record.question.originalIndex + 1} 题", color = MaterialTheme.colorScheme.error)
                         Text(record.question.text)
-                        Text("你的答案：${record.selectedAnswers.sorted().joinToString("、").ifBlank { "未选择" }}")
-                        Text("正确答案：${record.question.answers.sorted().joinToString("、")}")
+                        Text(
+                            "你的答案：${formatOptionAnswers(record.question.options, record.selectedAnswers)}",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Text(
+                            "正确答案：${formatOptionAnswers(record.question.options, record.question.answers)}",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        QuestionOptionDetails(
+                            options = record.question.options,
+                            correctAnswers = record.question.answers,
+                            selectedAnswers = record.selectedAnswers,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }

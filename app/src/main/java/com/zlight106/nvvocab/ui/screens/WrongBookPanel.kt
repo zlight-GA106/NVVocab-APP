@@ -31,8 +31,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.data.WrongQuestionSort
+import com.zlight106.nvvocab.data.formatOptionAnswers
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.NvvDropdown
+import com.zlight106.nvvocab.ui.components.QuestionOptionDetails
 import com.zlight106.nvvocab.ui.components.SectionCard
 import com.zlight106.nvvocab.ui.components.SegmentedRow
 import com.zlight106.nvvocab.ui.icons.NvvIcons
@@ -228,12 +230,33 @@ private fun WrongQuestionCard(
                 progress = { entry.proficiencyPercent / 100f },
                 modifier = Modifier.fillMaxWidth(),
             )
+            QuestionOptionDetails(
+                options = entry.options,
+                correctAnswers = entry.correctAnswers,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "正确答案：${formatOptionAnswers(entry.options, entry.correctAnswers)}",
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
             entry.aiAnalysis?.takeIf(String::isNotBlank)?.let { analysis ->
                 Surface(
                     shape = MaterialTheme.shapes.large,
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
                 ) {
-                    Text(analysis, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+                    Column(
+                        Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "AI 错题解析",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(analysis, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
             }
             OutlinedButton(
