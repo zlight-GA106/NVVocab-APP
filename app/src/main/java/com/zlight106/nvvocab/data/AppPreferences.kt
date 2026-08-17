@@ -200,6 +200,36 @@ class AppPreferences(context: Context) {
             .apply()
     }
 
+    fun readContrastReviewPreferences(): ContrastReviewPreferences = ContrastReviewPreferences(
+        type = readEnum(KEY_CONTRAST_REVIEW_TYPE, ContrastPracticeType.CHINESE_TO_ENGLISH),
+        difficulty = readEnum(KEY_CONTRAST_REVIEW_DIFFICULTY, PracticeDifficulty.EASY),
+        rangeMode = readEnum(KEY_CONTRAST_REVIEW_RANGE, PracticeRangeMode.ALL),
+        selectedTag = preferences.getString(KEY_CONTRAST_REVIEW_TAG, null),
+        proficiencyBand = readEnum(KEY_CONTRAST_REVIEW_PROFICIENCY, ProficiencyBand.LOW),
+        selectedWordIds = preferences.getStringSet(KEY_CONTRAST_REVIEW_WORDS, emptySet()).orEmpty(),
+        sort = readEnum(KEY_CONTRAST_REVIEW_SORT, QueueSort.LATEST),
+        optionCountText = preferences.getString(KEY_CONTRAST_REVIEW_OPTIONS, "4").orEmpty(),
+        questionCountText = preferences.getString(KEY_CONTRAST_REVIEW_QUESTIONS, "10").orEmpty(),
+        timeLimitText = preferences.getString(KEY_CONTRAST_REVIEW_TIME, "30").orEmpty(),
+        hintEnabled = preferences.getBoolean(KEY_CONTRAST_REVIEW_HINT, false),
+    )
+
+    fun saveContrastReviewPreferences(value: ContrastReviewPreferences) {
+        preferences.edit()
+            .putString(KEY_CONTRAST_REVIEW_TYPE, value.type.name)
+            .putString(KEY_CONTRAST_REVIEW_DIFFICULTY, value.difficulty.name)
+            .putString(KEY_CONTRAST_REVIEW_RANGE, value.rangeMode.name)
+            .putString(KEY_CONTRAST_REVIEW_TAG, value.selectedTag)
+            .putString(KEY_CONTRAST_REVIEW_PROFICIENCY, value.proficiencyBand.name)
+            .putStringSet(KEY_CONTRAST_REVIEW_WORDS, value.selectedWordIds)
+            .putString(KEY_CONTRAST_REVIEW_SORT, value.sort.name)
+            .putString(KEY_CONTRAST_REVIEW_OPTIONS, value.optionCountText)
+            .putString(KEY_CONTRAST_REVIEW_QUESTIONS, value.questionCountText)
+            .putString(KEY_CONTRAST_REVIEW_TIME, value.timeLimitText)
+            .putBoolean(KEY_CONTRAST_REVIEW_HINT, value.hintEnabled)
+            .apply()
+    }
+
     private inline fun <reified T : Enum<T>> readEnum(key: String, fallback: T): T = runCatching {
         enumValueOf<T>(preferences.getString(key, fallback.name).orEmpty())
     }.getOrDefault(fallback)
@@ -424,6 +454,17 @@ class AppPreferences(context: Context) {
         const val KEY_ADMINISTRATOR_MODE = "administrator_mode"
         const val KEY_AUTO_SYNC = "automatic_sync"
         const val KEY_CONTRAST_PRESET = "contrast_practice_preset"
+        const val KEY_CONTRAST_REVIEW_DIFFICULTY = "contrast_review_difficulty"
+        const val KEY_CONTRAST_REVIEW_HINT = "contrast_review_hint"
+        const val KEY_CONTRAST_REVIEW_OPTIONS = "contrast_review_options"
+        const val KEY_CONTRAST_REVIEW_PROFICIENCY = "contrast_review_proficiency"
+        const val KEY_CONTRAST_REVIEW_QUESTIONS = "contrast_review_questions"
+        const val KEY_CONTRAST_REVIEW_RANGE = "contrast_review_range"
+        const val KEY_CONTRAST_REVIEW_SORT = "contrast_review_sort"
+        const val KEY_CONTRAST_REVIEW_TAG = "contrast_review_tag"
+        const val KEY_CONTRAST_REVIEW_TIME = "contrast_review_time"
+        const val KEY_CONTRAST_REVIEW_TYPE = "contrast_review_type"
+        const val KEY_CONTRAST_REVIEW_WORDS = "contrast_review_words"
         const val KEY_DYNAMIC_COLOR = "dynamic_color"
         const val KEY_DAILY_CONTRAST_TARGET = "daily_contrast_target"
         const val KEY_DAILY_CUSTOM_QUIZ_TARGET = "daily_custom_quiz_target"

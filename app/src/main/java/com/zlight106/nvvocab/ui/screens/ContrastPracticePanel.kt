@@ -44,6 +44,7 @@ import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.ContrastPracticePreset
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.ContrastQuestion
+import com.zlight106.nvvocab.data.ContrastReviewPreferences
 import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.PracticeRangeMode
 import com.zlight106.nvvocab.data.ProficiencyBand
@@ -73,18 +74,18 @@ fun ContrastPracticePanel(
 ) {
     val generationProgress by viewModel.contrastGenerationProgress.collectAsStateWithLifecycle()
     val appState by viewModel.uiState.collectAsStateWithLifecycle()
-    val initialPreset = appState.contrastPracticePresets.forDifficulty(PracticeDifficulty.EASY)
-    var type by remember { mutableStateOf(ContrastPracticeType.CHINESE_TO_ENGLISH) }
-    var difficulty by remember { mutableStateOf(PracticeDifficulty.EASY) }
-    var rangeMode by remember { mutableStateOf(PracticeRangeMode.ALL) }
-    var selectedTag by remember { mutableStateOf<String?>(null) }
-    var proficiencyBand by remember { mutableStateOf(ProficiencyBand.LOW) }
-    var selectedWordIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    var sort by remember { mutableStateOf(QueueSort.LATEST) }
-    var optionCountText by remember { mutableStateOf(initialPreset.optionCount.toString()) }
-    var questionCountText by remember { mutableStateOf(initialPreset.questionCount.toString()) }
-    var timeLimitText by remember { mutableStateOf(initialPreset.timeLimitSeconds.toString()) }
-    var hintEnabled by remember { mutableStateOf(false) }
+    val savedPreferences = appState.contrastReviewPreferences
+    var type by remember { mutableStateOf(savedPreferences.type) }
+    var difficulty by remember { mutableStateOf(savedPreferences.difficulty) }
+    var rangeMode by remember { mutableStateOf(savedPreferences.rangeMode) }
+    var selectedTag by remember { mutableStateOf(savedPreferences.selectedTag) }
+    var proficiencyBand by remember { mutableStateOf(savedPreferences.proficiencyBand) }
+    var selectedWordIds by remember { mutableStateOf(savedPreferences.selectedWordIds) }
+    var sort by remember { mutableStateOf(savedPreferences.sort) }
+    var optionCountText by remember { mutableStateOf(savedPreferences.optionCountText) }
+    var questionCountText by remember { mutableStateOf(savedPreferences.questionCountText) }
+    var timeLimitText by remember { mutableStateOf(savedPreferences.timeLimitText) }
+    var hintEnabled by remember { mutableStateOf(savedPreferences.hintEnabled) }
     var showWordPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
     var generating by remember { mutableStateOf(false) }
@@ -95,6 +96,24 @@ fun ContrastPracticePanel(
     var finalElapsedSeconds by remember { mutableIntStateOf(0) }
     var started by remember { mutableStateOf(false) }
     var finished by remember { mutableStateOf(false) }
+
+    fun persist() {
+        viewModel.saveContrastReviewPreferences(
+            ContrastReviewPreferences(
+                type = type,
+                difficulty = difficulty,
+                rangeMode = rangeMode,
+                selectedTag = selectedTag,
+                proficiencyBand = proficiencyBand,
+                selectedWordIds = selectedWordIds,
+                sort = sort,
+                optionCountText = optionCountText,
+                questionCountText = questionCountText,
+                timeLimitText = timeLimitText,
+                hintEnabled = hintEnabled,
+            ),
+        )
+    }
 
     val scopedWords = remember(words, rangeMode, selectedTag, proficiencyBand, selectedWordIds, sort) {
         ContrastPracticePlanner.selectWords(
@@ -125,6 +144,7 @@ fun ContrastPracticePanel(
         timeLimitText = preset.timeLimitSeconds.toString()
         started = false
         finished = false
+        persist()
     }
 
     fun generate() {
@@ -179,7 +199,12 @@ fun ContrastPracticePanel(
                         ContrastPracticeType.ENGLISH_TO_CHINESE to "英文翻译中文多选一",
                     ),
                     icon = NvvIcons.Sparkles,
-                    onChange = { type = it; started = false; finished = false },
+                    onChange = {
+                        type = it
+                        started = false
+                        finished = false
+                        persist()
+                    },
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -216,7 +241,12 @@ fun ContrastPracticePanel(
                         PracticeRangeMode.CUSTOM to "自由选择单词",
                     ),
                     icon = NvvIcons.Tags,
-                    onChange = { rangeMode = it; started = false; finished = false },
+                    onChange = {
+                        rangeMode = it
+                        started = false
+                        finished = false
+                        persist()
+                    },
                 )
                 when (rangeMode) {
                     PracticeRangeMode.CATEGORY -> NvvDropdown(
@@ -224,7 +254,7 @@ fun ContrastPracticePanel(
                         value = selectedTag,
                         options = listOf(null to "请选择分类") + tags.map { tag -> tag to tag },
                         icon = NvvIcons.Tags,
-                        onChange = { selectedTag = it },
+                        onChange = { selectedTag = it; persist() },
                     )
                     PracticeRangeMode.PROFICIENCY -> NvvDropdown(
                         label = "熟练度区间",
@@ -235,7 +265,7 @@ fun ContrastPracticePanel(
                             ProficiencyBand.HIGH to "高熟练度 70 至 100",
                         ),
                         icon = NvvIcons.RefreshCw,
-                        onChange = { proficiencyBand = it },
+                        onChange = { proficiencyBand = it; persist() },
                     )
                     PracticeRangeMode.CUSTOM -> OutlinedButton(
                         onClick = { showWordPicker = true },
@@ -259,7 +289,12 @@ fun ContrastPracticePanel(
                         QueueSort.RANDOM to "随机排序",
                     ),
                     icon = NvvIcons.RefreshCw,
-                    onChange = { sort = it; started = false; finished = false },
+                    onChange = {
+                        sort = it
+                        started = false
+                        finished = false
+                        persist()
+                    },
                 )
                 Text(
                     "当前范围 ${scopedWords.size} 词，题量超出范围时按实际词数生成。",
@@ -271,28 +306,31 @@ fun ContrastPracticePanel(
                 ) {
                     CompactNumberField(
                         value = optionCountText,
-                        onValueChange = { optionCountText = it },
+                        onValueChange = { optionCountText = it; persist() },
                         label = "选项数",
                         supportingText = "2 至 8",
                         modifier = Modifier.weight(1f),
                     )
                     CompactNumberField(
                         value = questionCountText,
-                        onValueChange = { questionCountText = it },
+                        onValueChange = { questionCountText = it; persist() },
                         label = "题量",
                         supportingText = "最多 30",
                         modifier = Modifier.weight(1f),
                     )
                     CompactNumberField(
                         value = timeLimitText,
-                        onValueChange = { timeLimitText = it },
+                        onValueChange = { timeLimitText = it; persist() },
                         label = "单题秒数",
                         supportingText = "5 至 300",
                         modifier = Modifier.weight(1f),
                     )
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth().clickable { hintEnabled = !hintEnabled },
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        hintEnabled = !hintEnabled
+                        persist()
+                    },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -301,7 +339,13 @@ fun ContrastPracticePanel(
                         Text("提示模式", style = MaterialTheme.typography.titleSmall)
                         Text("答题时在卡片边角显示正确答案。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Switch(checked = hintEnabled, onCheckedChange = { hintEnabled = it })
+                    Switch(
+                        checked = hintEnabled,
+                        onCheckedChange = {
+                            hintEnabled = it
+                            persist()
+                        },
+                    )
                 }
                 val optionCount = optionCountText.toIntOrNull() ?: 0
                 val questionCount = questionCountText.toIntOrNull() ?: 0
@@ -391,7 +435,10 @@ fun ContrastPracticePanel(
         WordPickerDialog(
             words = words,
             selectedIds = selectedWordIds,
-            onSelectionChange = { selectedWordIds = it },
+            onSelectionChange = {
+                selectedWordIds = it
+                persist()
+            },
             onDismiss = { showWordPicker = false },
         )
     }
@@ -413,6 +460,7 @@ fun ContrastPracticePanel(
                 questionCountText = preset.questionCount.toString()
                 timeLimitText = preset.timeLimitSeconds.toString()
                 viewModel.saveContrastPracticePreset(difficulty, preset)
+                persist()
                 started = false
                 finished = false
                 showPresetEditor = false

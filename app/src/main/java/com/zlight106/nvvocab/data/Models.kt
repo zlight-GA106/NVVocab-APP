@@ -428,6 +428,20 @@ data class QuizReviewPreferences(
     val randomizeOptions: Boolean = false,
 )
 
+data class ContrastReviewPreferences(
+    val type: ContrastPracticeType = ContrastPracticeType.CHINESE_TO_ENGLISH,
+    val difficulty: PracticeDifficulty = PracticeDifficulty.EASY,
+    val rangeMode: PracticeRangeMode = PracticeRangeMode.ALL,
+    val selectedTag: String? = null,
+    val proficiencyBand: ProficiencyBand = ProficiencyBand.LOW,
+    val selectedWordIds: Set<String> = emptySet(),
+    val sort: QueueSort = QueueSort.LATEST,
+    val optionCountText: String = "4",
+    val questionCountText: String = "10",
+    val timeLimitText: String = "30",
+    val hintEnabled: Boolean = false,
+)
+
 enum class SyncMode {
     ON_LOCAL_CHANGE,
     PERIODIC,

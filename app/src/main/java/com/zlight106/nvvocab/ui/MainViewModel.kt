@@ -14,6 +14,7 @@ import com.zlight106.nvvocab.data.ContrastPracticePresets
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.ContrastQuestion
 import com.zlight106.nvvocab.data.ContrastQuestionResult
+import com.zlight106.nvvocab.data.ContrastReviewPreferences
 import com.zlight106.nvvocab.data.DailyProgressReference
 import com.zlight106.nvvocab.data.DailyProgressSettings
 import com.zlight106.nvvocab.data.DailyMemoSettings
@@ -50,6 +51,7 @@ data class AppUiState(
     val aiTesting: Boolean = false,
     val automaticSync: Boolean,
     val contrastPracticePresets: ContrastPracticePresets,
+    val contrastReviewPreferences: ContrastReviewPreferences,
     val dailyProgressSettings: DailyProgressSettings,
     val dailyMemoSettings: DailyMemoSettings,
     val dailyReviewTarget: Int,
@@ -404,6 +406,11 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         mutableUiState.value = readUiState()
     }
 
+    fun saveContrastReviewPreferences(value: ContrastReviewPreferences) {
+        preferences.saveContrastReviewPreferences(value)
+        mutableUiState.value = readUiState()
+    }
+
     fun setThemePreset(id: String?) {
         preferences.saveThemePresetId(id)
         preferences.setDynamicColorEnabled(id == null)
@@ -503,6 +510,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         aiTesting = false,
         automaticSync = preferences.isAutomaticSyncEnabled(),
         contrastPracticePresets = preferences.readContrastPracticePresets(),
+        contrastReviewPreferences = preferences.readContrastReviewPreferences(),
         dailyProgressSettings = preferences.readDailyProgressSettings(),
         dailyMemoSettings = preferences.readDailyMemoSettings(),
         dailyReviewTarget = preferences.readDailyReviewTarget(),
