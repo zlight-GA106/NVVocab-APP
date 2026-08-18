@@ -149,9 +149,9 @@ fun ContrastPracticePanel(
 
     fun generate() {
         val optionCount = optionCountText.toIntOrNull() ?: return
-        val questionCount = questionCountText.toIntOrNull() ?: return
-        if (optionCount !in 2..8 || questionCount < 1 || scopedWords.isEmpty()) return
-        val targets = scopedWords.take(questionCount)
+        val maximumQuestionCount = questionCountText.toIntOrNull() ?: return
+        if (optionCount !in 2..8 || maximumQuestionCount < 0 || scopedWords.isEmpty()) return
+        val targets = ContrastPracticePlanner.applyMaximum(scopedWords, maximumQuestionCount)
         generating = true
         started = false
         finished = false
@@ -297,7 +297,7 @@ fun ContrastPracticePanel(
                     },
                 )
                 Text(
-                    "当前范围 ${scopedWords.size} 词，题量超出范围时按实际词数生成。",
+                    "当前范围 ${scopedWords.size} 词，最大题量为 0 时生成当前分类的全部词。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Row(
@@ -314,8 +314,8 @@ fun ContrastPracticePanel(
                     CompactNumberField(
                         value = questionCountText,
                         onValueChange = { questionCountText = it; persist() },
-                        label = "题量",
-                        supportingText = "按当前范围生成",
+                        label = "最大题量",
+                        supportingText = "0 为全部",
                         modifier = Modifier.weight(1f),
                     )
                     CompactNumberField(
@@ -351,7 +351,7 @@ fun ContrastPracticePanel(
                 val questionCount = questionCountText.toIntOrNull() ?: 0
                 val timeLimit = timeLimitText.toIntOrNull() ?: 0
                 val configurationValid = optionCount in 2..8 &&
-                    questionCount >= 1 &&
+                    questionCount >= 0 &&
                     timeLimit in 5..300 &&
                     scopedWords.isNotEmpty() &&
                     availableChoiceCount >= optionCount
@@ -489,7 +489,7 @@ private fun PresetEditorDialog(
     val questionCount = questionCountText.toIntOrNull()
     val timeLimit = timeLimitText.toIntOrNull()
     val valid = optionCount != null && optionCount in 2..8 &&
-        questionCount != null && questionCount >= 1 &&
+        questionCount != null && questionCount >= 0 &&
         timeLimit != null && timeLimit in 5..300
 
     AlertDialog(
@@ -507,8 +507,8 @@ private fun PresetEditorDialog(
                 CompactNumberField(
                     value = questionCountText,
                     onValueChange = { questionCountText = it },
-                    label = "题量",
-                    supportingText = "至少 1",
+                    label = "最大题量",
+                    supportingText = "0 为全部",
                     modifier = Modifier.fillMaxWidth(),
                 )
                 CompactNumberField(

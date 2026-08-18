@@ -6,6 +6,11 @@ import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.WordEntry
 
 object ContrastPracticePlanner {
+    fun applyMaximum(words: List<WordEntry>, maximum: Int): List<WordEntry> {
+        require(maximum >= 0) { "最大题量不能小于 0。" }
+        return if (maximum == 0) words else words.take(maximum)
+    }
+
     fun selectWords(
         words: List<WordEntry>,
         rangeMode: PracticeRangeMode,

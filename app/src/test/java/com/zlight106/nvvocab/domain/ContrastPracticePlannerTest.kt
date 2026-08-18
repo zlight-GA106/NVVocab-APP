@@ -9,6 +9,25 @@ import org.junit.Test
 
 class ContrastPracticePlannerTest {
     @Test
+    fun zeroMaximumKeepsEntireCategory() {
+        val categoryWords = (1..79).map { index -> word("word-$index", "A", index.toLong()) }
+
+        val result = ContrastPracticePlanner.applyMaximum(categoryWords, 0)
+
+        assertEquals(79, result.size)
+    }
+
+    @Test
+    fun positiveMaximumCapsCategoryWithoutChangingOrder() {
+        val categoryWords = (1..79).map { index -> word("word-$index", "A", index.toLong()) }
+
+        val result = ContrastPracticePlanner.applyMaximum(categoryWords, 30)
+
+        assertEquals(30, result.size)
+        assertEquals(categoryWords.take(30).map(WordEntry::id), result.map(WordEntry::id))
+    }
+
+    @Test
     fun categoryRangeUsesLatestImportOrder() {
         val words = listOf(
             word("old", "A", 100L),

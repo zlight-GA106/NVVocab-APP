@@ -209,7 +209,7 @@ class AppPreferences(context: Context) {
         selectedWordIds = preferences.getStringSet(KEY_CONTRAST_REVIEW_WORDS, emptySet()).orEmpty(),
         sort = readEnum(KEY_CONTRAST_REVIEW_SORT, QueueSort.LATEST),
         optionCountText = preferences.getString(KEY_CONTRAST_REVIEW_OPTIONS, "4").orEmpty(),
-        questionCountText = preferences.getString(KEY_CONTRAST_REVIEW_QUESTIONS, "10").orEmpty(),
+        questionCountText = preferences.getString(KEY_CONTRAST_REVIEW_QUESTIONS, "0").orEmpty(),
         timeLimitText = preferences.getString(KEY_CONTRAST_REVIEW_TIME, "30").orEmpty(),
         hintEnabled = preferences.getBoolean(KEY_CONTRAST_REVIEW_HINT, false),
     )
@@ -404,15 +404,15 @@ class AppPreferences(context: Context) {
     fun readContrastPracticePresets(): ContrastPracticePresets = ContrastPracticePresets(
         easy = readContrastPracticePreset(
             prefix = "easy",
-            fallback = ContrastPracticePreset(4, 10, 30),
+            fallback = ContrastPracticePreset(4, 0, 30),
         ),
         medium = readContrastPracticePreset(
             prefix = "medium",
-            fallback = ContrastPracticePreset(6, 10, 20),
+            fallback = ContrastPracticePreset(6, 0, 20),
         ),
         hard = readContrastPracticePreset(
             prefix = "hard",
-            fallback = ContrastPracticePreset(8, 10, 12),
+            fallback = ContrastPracticePreset(8, 0, 12),
         ),
     )
 
@@ -420,7 +420,7 @@ class AppPreferences(context: Context) {
         val prefix = difficulty.name.lowercase()
         preferences.edit()
             .putInt("${KEY_CONTRAST_PRESET}_${prefix}_options", preset.optionCount.coerceIn(2, 8))
-            .putInt("${KEY_CONTRAST_PRESET}_${prefix}_questions", preset.questionCount.coerceAtLeast(1))
+            .putInt(contrastPresetQuestionKey(prefix), preset.questionCount.coerceAtLeast(0))
             .putInt("${KEY_CONTRAST_PRESET}_${prefix}_seconds", preset.timeLimitSeconds.coerceIn(5, 300))
             .apply()
     }
@@ -434,14 +434,17 @@ class AppPreferences(context: Context) {
             fallback.optionCount,
         ).coerceIn(2, 8),
         questionCount = preferences.getInt(
-            "${KEY_CONTRAST_PRESET}_${prefix}_questions",
+            contrastPresetQuestionKey(prefix),
             fallback.questionCount,
-        ).coerceAtLeast(1),
+        ).coerceAtLeast(0),
         timeLimitSeconds = preferences.getInt(
             "${KEY_CONTRAST_PRESET}_${prefix}_seconds",
             fallback.timeLimitSeconds,
         ).coerceIn(5, 300),
     )
+
+    private fun contrastPresetQuestionKey(prefix: String): String =
+        "${KEY_CONTRAST_PRESET}_${prefix}_max_questions_v2"
 
     private companion object {
         const val KEY_ACCESS_TOKEN = "access_token"
@@ -458,7 +461,7 @@ class AppPreferences(context: Context) {
         const val KEY_CONTRAST_REVIEW_HINT = "contrast_review_hint"
         const val KEY_CONTRAST_REVIEW_OPTIONS = "contrast_review_options"
         const val KEY_CONTRAST_REVIEW_PROFICIENCY = "contrast_review_proficiency"
-        const val KEY_CONTRAST_REVIEW_QUESTIONS = "contrast_review_questions"
+        const val KEY_CONTRAST_REVIEW_QUESTIONS = "contrast_review_max_questions_v2"
         const val KEY_CONTRAST_REVIEW_RANGE = "contrast_review_range"
         const val KEY_CONTRAST_REVIEW_SORT = "contrast_review_sort"
         const val KEY_CONTRAST_REVIEW_TAG = "contrast_review_tag"

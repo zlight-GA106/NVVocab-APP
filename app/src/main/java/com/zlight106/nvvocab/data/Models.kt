@@ -246,9 +246,9 @@ data class ContrastPracticePreset(
 )
 
 data class ContrastPracticePresets(
-    val easy: ContrastPracticePreset = ContrastPracticePreset(4, 10, 30),
-    val medium: ContrastPracticePreset = ContrastPracticePreset(6, 10, 20),
-    val hard: ContrastPracticePreset = ContrastPracticePreset(8, 10, 12),
+    val easy: ContrastPracticePreset = ContrastPracticePreset(4, 0, 30),
+    val medium: ContrastPracticePreset = ContrastPracticePreset(6, 0, 20),
+    val hard: ContrastPracticePreset = ContrastPracticePreset(8, 0, 12),
 ) {
     fun forDifficulty(difficulty: PracticeDifficulty): ContrastPracticePreset = when (difficulty) {
         PracticeDifficulty.EASY -> easy
@@ -437,7 +437,7 @@ data class ContrastReviewPreferences(
     val selectedWordIds: Set<String> = emptySet(),
     val sort: QueueSort = QueueSort.LATEST,
     val optionCountText: String = "4",
-    val questionCountText: String = "10",
+    val questionCountText: String = "0",
     val timeLimitText: String = "30",
     val hintEnabled: Boolean = false,
 )
