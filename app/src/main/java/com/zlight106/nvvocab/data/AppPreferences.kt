@@ -420,7 +420,7 @@ class AppPreferences(context: Context) {
         val prefix = difficulty.name.lowercase()
         preferences.edit()
             .putInt("${KEY_CONTRAST_PRESET}_${prefix}_options", preset.optionCount.coerceIn(2, 8))
-            .putInt("${KEY_CONTRAST_PRESET}_${prefix}_questions", preset.questionCount.coerceIn(1, 30))
+            .putInt("${KEY_CONTRAST_PRESET}_${prefix}_questions", preset.questionCount.coerceAtLeast(1))
             .putInt("${KEY_CONTRAST_PRESET}_${prefix}_seconds", preset.timeLimitSeconds.coerceIn(5, 300))
             .apply()
     }
@@ -436,7 +436,7 @@ class AppPreferences(context: Context) {
         questionCount = preferences.getInt(
             "${KEY_CONTRAST_PRESET}_${prefix}_questions",
             fallback.questionCount,
-        ).coerceIn(1, 30),
+        ).coerceAtLeast(1),
         timeLimitSeconds = preferences.getInt(
             "${KEY_CONTRAST_PRESET}_${prefix}_seconds",
             fallback.timeLimitSeconds,

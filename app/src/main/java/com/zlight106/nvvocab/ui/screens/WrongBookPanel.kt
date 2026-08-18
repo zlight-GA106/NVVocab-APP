@@ -8,9 +8,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,7 +31,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.data.WrongQuestionSort
+import com.zlight106.nvvocab.data.WrongQuestionSource
 import com.zlight106.nvvocab.data.formatOptionAnswers
+import com.zlight106.nvvocab.domain.WrongQuestionGroup
+import com.zlight106.nvvocab.domain.WrongQuestionGrouping
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.NvvDropdown
 import com.zlight106.nvvocab.ui.components.QuestionOptionDetails
@@ -52,9 +56,21 @@ fun WrongBookPanel(
     val analyzingId by viewModel.analyzingWrongQuestionId.collectAsStateWithLifecycle()
     var view by remember { mutableStateOf(WrongBookView.ERRORS) }
     var sort by remember { mutableStateOf(WrongQuestionSort.WRONG_COUNT) }
-    val visible = remember(entries, view, sort) {
-        entries.asSequence()
-            .filter { view == WrongBookView.ERRORS || it.favorite }
+    var selectedGroupKey by remember { mutableStateOf<String?>(null) }
+    val availableEntries = remember(entries, view) {
+        entries.filter { view == WrongBookView.ERRORS || it.favorite }
+    }
+    val availableGroups = remember(availableEntries) {
+        WrongQuestionGrouping.group(availableEntries)
+    }
+    LaunchedEffect(availableGroups, selectedGroupKey) {
+        if (selectedGroupKey != null && availableGroups.none { it.key == selectedGroupKey }) {
+            selectedGroupKey = null
+        }
+    }
+    val visible = remember(availableEntries, sort, selectedGroupKey) {
+        availableEntries.asSequence()
+            .filter { selectedGroupKey == null || WrongQuestionGrouping.keyOf(it) == selectedGroupKey }
             .let { sequence ->
                 when (sort) {
                     WrongQuestionSort.LATEST -> sequence.sortedByDescending(WrongQuestionEntry::lastWrongAt)
@@ -65,6 +81,7 @@ fun WrongBookPanel(
             }
             .toList()
     }
+    val visibleGroups = remember(visible) { WrongQuestionGrouping.group(visible) }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionCard {
@@ -91,6 +108,7 @@ fun WrongBookPanel(
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     if (maxWidth < 520.dp) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            WrongBankDropdown(availableGroups, selectedGroupKey, { selectedGroupKey = it })
                             WrongSortDropdown(sort, { sort = it })
                             Button(
                                 onClick = { onStartSession(PracticeSessionRequest.WrongBook(visible)) },
@@ -107,6 +125,12 @@ fun WrongBookPanel(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.Bottom,
                         ) {
+                            WrongBankDropdown(
+                                groups = availableGroups,
+                                value = selectedGroupKey,
+                                onChange = { selectedGroupKey = it },
+                                modifier = Modifier.weight(1f),
+                            )
                             WrongSortDropdown(sort, { sort = it }, Modifier.weight(1f))
                             Button(
                                 onClick = { onStartSession(PracticeSessionRequest.WrongBook(visible)) },
@@ -134,19 +158,77 @@ fun WrongBookPanel(
                 }
             }
         } else {
-            Column(
-                modifier = Modifier.heightIn(max = 680.dp).verticalScroll(rememberScrollState()),
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 680.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                visible.forEach { entry ->
-                    WrongQuestionCard(
-                        entry = entry,
-                        analyzing = analyzingId == entry.id,
-                        onFavorite = { viewModel.setWrongQuestionFavorite(entry) },
-                        onAnalyze = { viewModel.analyzeWrongQuestion(entry) },
-                    )
+                visibleGroups.forEach { group ->
+                    item(key = "group:${group.key}") {
+                        WrongQuestionGroupHeader(group)
+                    }
+                    items(
+                        items = group.entries,
+                        key = { entry -> "wrong:${entry.id}" },
+                    ) { entry ->
+                        WrongQuestionCard(
+                            entry = entry,
+                            showBankName = false,
+                            analyzing = analyzingId == entry.id,
+                            onFavorite = { viewModel.setWrongQuestionFavorite(entry) },
+                            onAnalyze = { viewModel.analyzeWrongQuestion(entry) },
+                        )
+                    }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun WrongBankDropdown(
+    groups: List<WrongQuestionGroup>,
+    value: String?,
+    onChange: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val options: List<Pair<String?, String>> = listOf(null to "全部题库") + groups.map { group ->
+        group.key to group.name
+    }
+    NvvDropdown(
+        label = "题库分类",
+        value = value,
+        options = options,
+        icon = NvvIcons.BookOpen,
+        onChange = onChange,
+        modifier = modifier,
+        compact = true,
+    )
+}
+
+@Composable
+private fun WrongQuestionGroupHeader(group: WrongQuestionGroup) {
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (group.source == WrongQuestionSource.QUIZ) NvvIcons.FileQuestion else NvvIcons.Sparkles,
+                contentDescription = null,
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(group.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (group.source == WrongQuestionSource.QUIZ) "本地题库" else "对照练习",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Text("${group.entries.size} 题", style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -192,6 +274,7 @@ private fun WrongBookSegment(
 @Composable
 private fun WrongQuestionCard(
     entry: WrongQuestionEntry,
+    showBankName: Boolean = true,
     analyzing: Boolean,
     onFavorite: () -> Unit,
     onAnalyze: () -> Unit,
@@ -208,7 +291,9 @@ private fun WrongQuestionCard(
                 verticalAlignment = Alignment.Top,
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(entry.bankName, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                    if (showBankName) {
+                        Text(entry.bankName, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                    }
                     Text(entry.questionText, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 }
                 IconButton(onClick = onFavorite) {

@@ -150,7 +150,7 @@ fun ContrastPracticePanel(
     fun generate() {
         val optionCount = optionCountText.toIntOrNull() ?: return
         val questionCount = questionCountText.toIntOrNull() ?: return
-        if (optionCount !in 2..8 || questionCount !in 1..30 || scopedWords.isEmpty()) return
+        if (optionCount !in 2..8 || questionCount < 1 || scopedWords.isEmpty()) return
         val targets = scopedWords.take(questionCount)
         generating = true
         started = false
@@ -315,7 +315,7 @@ fun ContrastPracticePanel(
                         value = questionCountText,
                         onValueChange = { questionCountText = it; persist() },
                         label = "题量",
-                        supportingText = "最多 30",
+                        supportingText = "按当前范围生成",
                         modifier = Modifier.weight(1f),
                     )
                     CompactNumberField(
@@ -351,7 +351,7 @@ fun ContrastPracticePanel(
                 val questionCount = questionCountText.toIntOrNull() ?: 0
                 val timeLimit = timeLimitText.toIntOrNull() ?: 0
                 val configurationValid = optionCount in 2..8 &&
-                    questionCount in 1..30 &&
+                    questionCount >= 1 &&
                     timeLimit in 5..300 &&
                     scopedWords.isNotEmpty() &&
                     availableChoiceCount >= optionCount
@@ -489,7 +489,7 @@ private fun PresetEditorDialog(
     val questionCount = questionCountText.toIntOrNull()
     val timeLimit = timeLimitText.toIntOrNull()
     val valid = optionCount != null && optionCount in 2..8 &&
-        questionCount != null && questionCount in 1..30 &&
+        questionCount != null && questionCount >= 1 &&
         timeLimit != null && timeLimit in 5..300
 
     AlertDialog(
@@ -508,7 +508,7 @@ private fun PresetEditorDialog(
                     value = questionCountText,
                     onValueChange = { questionCountText = it },
                     label = "题量",
-                    supportingText = "1 至 30",
+                    supportingText = "至少 1",
                     modifier = Modifier.fillMaxWidth(),
                 )
                 CompactNumberField(
@@ -579,7 +579,7 @@ private fun CompactNumberField(
     OutlinedTextField(
         modifier = modifier,
         value = value,
-        onValueChange = { onValueChange(it.filter(Char::isDigit).take(3)) },
+        onValueChange = { onValueChange(it.filter(Char::isDigit)) },
         label = { Text(label) },
         supportingText = { Text(supportingText) },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
