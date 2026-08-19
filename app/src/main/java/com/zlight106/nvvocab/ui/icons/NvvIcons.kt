@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 
 object NvvIcons {
     val AlertCircle = lucide("alert-circle", "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20 M12 8v4 M12 16h.01")
+    val ArrowLeft = lucide("arrow-left", "M19 12H5 M12 19l-7-7 7-7")
     val Bell = lucide("bell", "M10.27 21a2 2 0 0 0 3.46 0 M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9")
     val Bookmark = lucide("bookmark", "M6 3h12a2 2 0 0 1 2 2v16l-8-5-8 5V5a2 2 0 0 1 2-2z")
     val BookOpen = lucide("book-open", "M12 7v14 M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z")

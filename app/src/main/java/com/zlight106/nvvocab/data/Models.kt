@@ -426,6 +426,7 @@ data class QuizReviewPreferences(
     val rangeEnd: String = "",
     val randomCount: String = "20",
     val randomizeOptions: Boolean = false,
+    val unifiedSettlement: Boolean = false,
 )
 
 data class ContrastReviewPreferences(

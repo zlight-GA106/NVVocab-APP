@@ -77,6 +77,7 @@ sealed interface PracticeSessionRequest {
 
     data class Quiz(
         val queue: List<QuizQuestion>,
+        val unifiedSettlement: Boolean = false,
     ) : PracticeSessionRequest
 
     data class Contrast(
@@ -149,6 +150,7 @@ fun PracticeSessionScreen(
                 is PracticeSessionRequest.Quiz -> QuizSession(
                     queue = request.queue,
                     wrongBookSession = false,
+                    unifiedSettlement = request.unifiedSettlement,
                     viewModel = viewModel,
                     showAnswers = administratorMode,
                     onSettled = { settled = true },
@@ -164,6 +166,7 @@ fun PracticeSessionScreen(
                 is PracticeSessionRequest.WrongBook -> QuizSession(
                     queue = request.queue.map(WrongQuestionEntry::toQuizQuestion),
                     wrongBookSession = true,
+                    unifiedSettlement = false,
                     viewModel = viewModel,
                     showAnswers = true,
                     onSettled = { settled = true },
@@ -230,8 +233,12 @@ private fun WordSession(
                 position = currentIndex + 1,
                 total = request.queue.size,
                 enabled = !settling,
+                canGoPrevious = currentIndex > 0,
+                onPrevious = { currentIndex -= 1 },
                 onComplete = { quality ->
-                    val updated = results + WordReviewResult(request.queue[currentIndex], quality)
+                    val currentWord = request.queue[currentIndex]
+                    val updated = results.filterNot { it.word.id == currentWord.id } +
+                        WordReviewResult(currentWord, quality)
                     results = updated
                     if (currentIndex + 1 < request.queue.size) {
                         currentIndex += 1
@@ -270,6 +277,8 @@ private fun WordQuestion(
     position: Int,
     total: Int,
     enabled: Boolean,
+    canGoPrevious: Boolean,
+    onPrevious: () -> Unit,
     onComplete: (Int) -> Unit,
 ) {
     var answer by remember(word.id) { mutableStateOf("") }
@@ -326,7 +335,20 @@ private fun WordQuestion(
                 singleLine = true,
                 shape = MaterialTheme.shapes.extraLarge,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(
+                    onClick = onPrevious,
+                    enabled = enabled && canGoPrevious,
+                    shape = CircleShape,
+                ) {
+                    Icon(NvvIcons.ArrowLeft, null)
+                    Text("上一题", Modifier.padding(start = 6.dp))
+                }
+                Box(Modifier.weight(1f))
                 if (!checked) {
                     OutlinedButton(
                         onClick = { hinted = true },
@@ -348,15 +370,18 @@ private fun WordQuestion(
 private fun QuizSession(
     queue: List<QuizQuestion>,
     wrongBookSession: Boolean,
+    unifiedSettlement: Boolean,
     viewModel: MainViewModel,
     showAnswers: Boolean,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
-    var currentIndex by remember(queue, wrongBookSession) { mutableIntStateOf(0) }
-    var records by remember(queue, wrongBookSession) { mutableStateOf<List<QuizResultRecord>>(emptyList()) }
-    var finished by remember(queue, wrongBookSession) { mutableStateOf(false) }
-    var settling by remember(queue, wrongBookSession) { mutableStateOf(false) }
+    var currentIndex by remember(queue, wrongBookSession, unifiedSettlement) { mutableIntStateOf(0) }
+    var records by remember(queue, wrongBookSession, unifiedSettlement) {
+        mutableStateOf<List<QuizResultRecord>>(emptyList())
+    }
+    var finished by remember(queue, wrongBookSession, unifiedSettlement) { mutableStateOf(false) }
+    var settling by remember(queue, wrongBookSession, unifiedSettlement) { mutableStateOf(false) }
     var showWrongAnswers by remember(queue, finished) { mutableStateOf(false) }
 
     SessionBody {
@@ -411,14 +436,28 @@ private fun QuizSession(
                 }
             }
         } else {
+            val currentQuestion = queue[currentIndex]
+            val existingRecord = records.firstOrNull { it.question.id == currentQuestion.id }
             QuizQuestion(
-                question = queue[currentIndex],
+                question = currentQuestion,
                 position = currentIndex + 1,
                 total = queue.size,
                 enabled = !settling,
                 showAnswer = showAnswers,
+                initialSelectedAnswers = existingRecord?.selectedAnswers.orEmpty(),
+                initialChecked = !unifiedSettlement && existingRecord != null,
+                unifiedSettlement = unifiedSettlement,
+                canGoPrevious = currentIndex > 0,
+                onPrevious = { selectedAnswers ->
+                    if (unifiedSettlement && selectedAnswers.isNotEmpty()) {
+                        records = records.filterNot { it.question.id == currentQuestion.id } +
+                            QuizResultRecord(currentQuestion, selectedAnswers)
+                    }
+                    currentIndex -= 1
+                },
                 onComplete = { selectedAnswers ->
-                    val updated = records + QuizResultRecord(queue[currentIndex], selectedAnswers)
+                    val updated = records.filterNot { it.question.id == currentQuestion.id } +
+                        QuizResultRecord(currentQuestion, selectedAnswers)
                     records = updated
                     if (currentIndex + 1 < queue.size) {
                         currentIndex += 1
@@ -457,10 +496,17 @@ private fun QuizQuestion(
     total: Int,
     enabled: Boolean,
     showAnswer: Boolean,
+    initialSelectedAnswers: Set<String>,
+    initialChecked: Boolean,
+    unifiedSettlement: Boolean,
+    canGoPrevious: Boolean,
+    onPrevious: (Set<String>) -> Unit,
     onComplete: (Set<String>) -> Unit,
 ) {
-    var selectedAnswers by remember(question.id) { mutableStateOf<Set<String>>(emptySet()) }
-    var checked by remember(question.id) { mutableStateOf(false) }
+    var selectedAnswers by remember(question.id, initialSelectedAnswers) {
+        mutableStateOf(initialSelectedAnswers)
+    }
+    var checked by remember(question.id, initialChecked) { mutableStateOf(initialChecked) }
     val multipleChoice = question.answers.size > 1
     val correct = selectedAnswers == question.answers
 
@@ -529,15 +575,40 @@ private fun QuizQuestion(
                     color = if (correct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
             }
-            Button(
-                onClick = {
-                    if (checked) onComplete(selectedAnswers) else checked = true
-                },
-                enabled = enabled && selectedAnswers.isNotEmpty(),
-                modifier = Modifier.align(Alignment.End),
-                shape = CircleShape,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(if (checked) if (position == total) "完成并结算" else "下一题" else "提交答案")
+                OutlinedButton(
+                    onClick = { onPrevious(selectedAnswers) },
+                    enabled = enabled && canGoPrevious,
+                    shape = CircleShape,
+                ) {
+                    Icon(NvvIcons.ArrowLeft, null)
+                    Text("上一题", Modifier.padding(start = 6.dp))
+                }
+                Button(
+                    onClick = {
+                        if (unifiedSettlement || checked) {
+                            onComplete(selectedAnswers)
+                        } else {
+                            checked = true
+                        }
+                    },
+                    enabled = enabled && selectedAnswers.isNotEmpty(),
+                    shape = CircleShape,
+                ) {
+                    Text(
+                        when {
+                            unifiedSettlement && position == total -> "统一结算"
+                            unifiedSettlement -> "下一题"
+                            checked && position == total -> "完成并结算"
+                            checked -> "下一题"
+                            else -> "提交答案"
+                        },
+                    )
+                }
             }
         }
     }
@@ -581,12 +652,18 @@ private fun ContrastSession(
                 hintEnabled = request.hintEnabled,
                 showAnswer = showAnswers,
                 enabled = !settling,
+                initialSelectedIndex = records.firstOrNull {
+                    it.question.id == request.queue[currentIndex].id
+                }?.selectedIndex,
+                canGoPrevious = currentIndex > 0,
+                onPrevious = { currentIndex -= 1 },
                 onComplete = { selectedIndex ->
                     val question = request.queue[currentIndex]
-                    val updated = records + ContrastQuestionResult(
-                        question = question,
-                        selectedIndex = selectedIndex,
-                    )
+                    val updated = records.filterNot { it.question.id == question.id } +
+                        ContrastQuestionResult(
+                            question = question,
+                            selectedIndex = selectedIndex,
+                        )
                     records = updated
                     if (currentIndex + 1 < request.queue.size) {
                         currentIndex += 1
@@ -632,9 +709,14 @@ private fun ContrastQuestion(
     hintEnabled: Boolean,
     showAnswer: Boolean,
     enabled: Boolean,
+    initialSelectedIndex: Int?,
+    canGoPrevious: Boolean,
+    onPrevious: () -> Unit,
     onComplete: (Int?) -> Unit,
 ) {
-    var selectedIndex by remember(question.id) { mutableStateOf<Int?>(null) }
+    var selectedIndex by remember(question.id, initialSelectedIndex) {
+        mutableStateOf(initialSelectedIndex)
+    }
     var checked by remember(question.id) { mutableStateOf(false) }
     var remainingSeconds by remember(question.id) { mutableIntStateOf(timeLimitSeconds) }
 
@@ -717,13 +799,26 @@ private fun ContrastQuestion(
                     color = if (correct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
             }
-            Button(
-                onClick = { if (checked) onComplete(selectedIndex) else checked = true },
-                enabled = enabled && (checked || selectedIndex != null),
-                modifier = Modifier.align(Alignment.End),
-                shape = CircleShape,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(if (checked) if (position == total) "完成并结算" else "下一题" else "提交答案")
+                OutlinedButton(
+                    onClick = onPrevious,
+                    enabled = enabled && canGoPrevious,
+                    shape = CircleShape,
+                ) {
+                    Icon(NvvIcons.ArrowLeft, null)
+                    Text("上一题", Modifier.padding(start = 6.dp))
+                }
+                Button(
+                    onClick = { if (checked) onComplete(selectedIndex) else checked = true },
+                    enabled = enabled && (checked || selectedIndex != null),
+                    shape = CircleShape,
+                ) {
+                    Text(if (checked) if (position == total) "完成并结算" else "下一题" else "提交答案")
+                }
             }
         }
     }

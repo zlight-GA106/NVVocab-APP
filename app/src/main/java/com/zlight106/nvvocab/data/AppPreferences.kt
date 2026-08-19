@@ -187,6 +187,7 @@ class AppPreferences(context: Context) {
         rangeEnd = preferences.getString(KEY_QUIZ_REVIEW_END, "").orEmpty(),
         randomCount = preferences.getString(KEY_QUIZ_REVIEW_RANDOM_COUNT, "20").orEmpty(),
         randomizeOptions = preferences.getBoolean(KEY_QUIZ_REVIEW_RANDOM_OPTIONS, false),
+        unifiedSettlement = preferences.getBoolean(KEY_QUIZ_REVIEW_UNIFIED_SETTLEMENT, false),
     )
 
     fun saveQuizReviewPreferences(value: QuizReviewPreferences) {
@@ -197,6 +198,7 @@ class AppPreferences(context: Context) {
             .putString(KEY_QUIZ_REVIEW_END, value.rangeEnd)
             .putString(KEY_QUIZ_REVIEW_RANDOM_COUNT, value.randomCount)
             .putBoolean(KEY_QUIZ_REVIEW_RANDOM_OPTIONS, value.randomizeOptions)
+            .putBoolean(KEY_QUIZ_REVIEW_UNIFIED_SETTLEMENT, value.unifiedSettlement)
             .apply()
     }
 
@@ -491,6 +493,7 @@ class AppPreferences(context: Context) {
         const val KEY_QUIZ_REVIEW_RANDOM_COUNT = "quiz_review_random_count"
         const val KEY_QUIZ_REVIEW_RANDOM_OPTIONS = "quiz_review_random_options"
         const val KEY_QUIZ_REVIEW_START = "quiz_review_start"
+        const val KEY_QUIZ_REVIEW_UNIFIED_SETTLEMENT = "quiz_review_unified_settlement"
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_REMINDER_HOUR = "reminder_hour"
         const val KEY_REVIEW_CATEGORY = "review_category"

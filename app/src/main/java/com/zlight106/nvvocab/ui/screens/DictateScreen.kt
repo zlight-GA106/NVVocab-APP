@@ -393,6 +393,7 @@ private fun QuizReviewPanel(
     var rangeEnd by remember { mutableStateOf(initialPreferences.rangeEnd) }
     var randomCount by remember { mutableStateOf(initialPreferences.randomCount) }
     var randomizeOptions by remember { mutableStateOf(initialPreferences.randomizeOptions) }
+    var unifiedSettlement by remember { mutableStateOf(initialPreferences.unifiedSettlement) }
     var queue by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
     var records by remember { mutableStateOf<List<QuizAnswerRecord>>(emptyList()) }
@@ -425,6 +426,7 @@ private fun QuizReviewPanel(
                 rangeEnd = rangeEnd,
                 randomCount = randomCount,
                 randomizeOptions = randomizeOptions,
+                unifiedSettlement = unifiedSettlement,
             ),
         )
     }
@@ -482,7 +484,12 @@ private fun QuizReviewPanel(
             finished = false
             configurationError = if (prepared.isEmpty()) "当前范围内没有可练习的题目。" else null
             if (prepared.isNotEmpty()) {
-                onStartSession(PracticeSessionRequest.Quiz(prepared))
+                onStartSession(
+                    PracticeSessionRequest.Quiz(
+                        queue = prepared,
+                        unifiedSettlement = unifiedSettlement,
+                    ),
+                )
             }
         }
     }
@@ -600,6 +607,23 @@ private fun QuizReviewPanel(
                             Text("随机选项", style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "每次开始答题时随机排列选项，并自动重映射正确答案。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    SelectionRow(
+                        onClick = {
+                            unifiedSettlement = !unifiedSettlement
+                            persist()
+                        },
+                        spacing = 10.dp,
+                    ) {
+                        Checkbox(checked = unifiedSettlement, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("统一结算", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "答题期间可返回修改选择，完成最后一题后统一显示结果。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
