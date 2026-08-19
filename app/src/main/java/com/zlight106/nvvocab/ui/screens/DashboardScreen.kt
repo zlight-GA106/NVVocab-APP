@@ -58,7 +58,6 @@ import com.zlight106.nvvocab.data.DailyMemoTarget
 import com.zlight106.nvvocab.data.DailyPracticeProgress
 import com.zlight106.nvvocab.data.DailyProgressReference
 import com.zlight106.nvvocab.data.DailyProgressSettings
-import com.zlight106.nvvocab.data.ReviewLogEntry
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.StudyTimeProgress
 import com.zlight106.nvvocab.data.WordEntry
@@ -66,32 +65,17 @@ import com.zlight106.nvvocab.ui.AppUiState
 import com.zlight106.nvvocab.ui.components.DailyMemoEditor
 import com.zlight106.nvvocab.ui.components.SectionCard
 import com.zlight106.nvvocab.ui.icons.NvvIcons
-import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.text.KeyboardOptions
 
 private enum class HeatmapRange { MONTH, WEEK }
 
-private data class ProgressCapacity(
-    val dictation: Int,
-    val contrast: Int,
-    val customQuiz: Int,
-) {
-    fun maximumFor(reference: DailyProgressReference): Int = when (reference) {
-        DailyProgressReference.DICTATION -> dictation
-        DailyProgressReference.CONTRAST -> contrast
-        DailyProgressReference.CUSTOM_QUIZ -> customQuiz
-    }
-}
-
 @Composable
 fun DashboardScreen(
     state: AppUiState,
     words: List<WordEntry>,
-    logs: List<ReviewLogEntry>,
     contrastSessions: List<ContrastPracticeSession>,
     quizBanks: List<QuizBank>,
     dailyProgress: DailyPracticeProgress,
@@ -105,22 +89,11 @@ fun DashboardScreen(
     var showMemoDialog by remember { mutableStateOf(false) }
     var showStudyTimeDialog by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
-    val zone = ZoneId.systemDefault()
-    val today = LocalDate.now(zone)
+    val today = LocalDate.now()
     val progressSettings = state.dailyProgressSettings
     val progressReference = progressSettings.reference
-    val progressCapacity = ProgressCapacity(
-        dictation = words.size,
-        contrast = words.size,
-        customQuiz = quizBanks.sumOf(QuizBank::questionCount),
-    )
     val todayCompleted = dailyProgress.completedFor(progressReference)
-    val maximumTarget = progressCapacity.maximumFor(progressReference)
-    val target = if (maximumTarget > 0) {
-        progressSettings.targetFor().coerceIn(1, maximumTarget)
-    } else {
-        0
-    }
+    val target = progressSettings.targetFor().coerceAtLeast(1)
     val progress = if (target > 0) {
         (todayCompleted.toFloat() / target).coerceIn(0f, 1f)
     } else {
@@ -218,7 +191,7 @@ fun DashboardScreen(
                     ) {
                         Icon(NvvIcons.LayoutDashboard, null, tint = MaterialTheme.colorScheme.primary)
                         Text(
-                            if (range == HeatmapRange.MONTH) "月复习热力图" else "周复习热力图",
+                            if (range == HeatmapRange.MONTH) "月学习热力图" else "周学习热力图",
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }
@@ -230,9 +203,9 @@ fun DashboardScreen(
                     label = "heatmap-range",
                 ) { selected ->
                     if (selected == HeatmapRange.MONTH) {
-                        MonthHeatmap(today, zone, logs)
+                        MonthHeatmap(today, studyTimeProgress.dailyMillis)
                     } else {
-                        WeekHeatmap(today, zone, logs)
+                        WeekHeatmap(today, studyTimeProgress.dailyMillis)
                     }
                 }
             }
@@ -241,7 +214,6 @@ fun DashboardScreen(
     if (showProgressDialog) {
         DailyProgressDialog(
             settings = progressSettings,
-            capacity = progressCapacity,
             onDismiss = { showProgressDialog = false },
             onConfirm = { reference, quantity ->
                 onSaveProgressSettings(reference, quantity)
@@ -313,7 +285,7 @@ private fun StudyTimeCard(
                 strokeCap = StrokeCap.Round,
             )
             Text(
-                "轻触设置每日学习时长；进度按应用前台使用时间累计，并在每天 0 点重置。",
+                "轻触设置每日学习时长；仅在练习会话中累计，并在每天 0 点切换到新记录。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -497,20 +469,15 @@ private fun DailyMemoDialog(
 @Composable
 private fun DailyProgressDialog(
     settings: DailyProgressSettings,
-    capacity: ProgressCapacity,
     onDismiss: () -> Unit,
     onConfirm: (DailyProgressReference, Int) -> Unit,
 ) {
     var selectedReference by remember(settings) { mutableStateOf(settings.reference) }
-    var quantityText by remember(settings, capacity) {
-        val maximum = capacity.maximumFor(settings.reference)
-        mutableStateOf(
-            if (maximum > 0) settings.targetFor().coerceAtMost(maximum).toString() else "",
-        )
+    var quantityText by remember(settings) {
+        mutableStateOf(settings.targetFor().coerceAtLeast(1).toString())
     }
     val quantity = quantityText.toIntOrNull()
-    val selectedMaximum = capacity.maximumFor(selectedReference)
-    val validQuantity = quantity != null && selectedMaximum > 0 && quantity in 1..selectedMaximum
+    val validQuantity = quantity != null && quantity > 0
     val haptic = LocalHapticFeedback.current
 
     AlertDialog(
@@ -526,28 +493,17 @@ private fun DailyProgressDialog(
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             selectedReference = reference
-                            val maximum = capacity.maximumFor(reference)
-                            quantityText = if (maximum > 0) {
-                                settings.targetFor(reference).coerceAtMost(maximum).toString()
-                            } else {
-                                ""
-                            }
+                            quantityText = settings.targetFor(reference).coerceAtLeast(1).toString()
                         },
                     )
                 }
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = quantityText,
-                    onValueChange = { quantityText = it.filter(Char::isDigit).take(6) },
+                    onValueChange = { quantityText = it.filter(Char::isDigit).take(9) },
                     label = { Text("每日目标题量") },
                     supportingText = {
-                        Text(
-                            if (selectedMaximum > 0) {
-                                "允许设置 1 至 $selectedMaximum ${selectedReference.unit()}。"
-                            } else {
-                                "当前数据库中没有可用于${selectedReference.label()}的内容。"
-                            },
-                        )
+                        Text("请输入任意大于 0 的${selectedReference.unit()}数。")
                     },
                     suffix = { Text(selectedReference.unit()) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -770,7 +726,7 @@ private fun MetricTile(label: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun MonthHeatmap(today: LocalDate, zone: ZoneId, logs: List<ReviewLogEntry>) {
+private fun MonthHeatmap(today: LocalDate, dailyMillis: Map<LocalDate, Long>) {
     val month = YearMonth.from(today)
     val firstDate = month.atDay(1)
     val leadingEmptyCells = firstDate.dayOfWeek.value - 1
@@ -780,8 +736,7 @@ private fun MonthHeatmap(today: LocalDate, zone: ZoneId, logs: List<ReviewLogEnt
         addAll(dates)
         while (size % 7 != 0) add(null)
     }
-    val countByDate = logs.groupingBy { it.reviewedAt.toLocalDate(zone) }.eachCount()
-    val maxCount = dates.maxOfOrNull { countByDate[it] ?: 0 }?.coerceAtLeast(1) ?: 1
+    val maxDuration = dates.maxOfOrNull { dailyMillis[it] ?: 0L }?.coerceAtLeast(1L) ?: 1L
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -806,8 +761,8 @@ private fun MonthHeatmap(today: LocalDate, zone: ZoneId, logs: List<ReviewLogEnt
                         Surface(Modifier.weight(1f).aspectRatio(1f), color = androidx.compose.ui.graphics.Color.Transparent) {}
                     } else {
                         HeatCell(
-                            count = countByDate[date] ?: 0,
-                            maxCount = maxCount,
+                            durationMillis = dailyMillis[date] ?: 0L,
+                            maxDurationMillis = maxDuration,
                             modifier = Modifier.weight(1f).aspectRatio(1f),
                             label = date.dayOfMonth.toString(),
                         )
@@ -819,10 +774,10 @@ private fun MonthHeatmap(today: LocalDate, zone: ZoneId, logs: List<ReviewLogEnt
 }
 
 @Composable
-private fun WeekHeatmap(today: LocalDate, zone: ZoneId, logs: List<ReviewLogEntry>) {
+private fun WeekHeatmap(today: LocalDate, dailyMillis: Map<LocalDate, Long>) {
     val days = (6 downTo 0).map { today.minusDays(it.toLong()) }
-    val counts = days.map { date -> logs.count { it.reviewedAt.toLocalDate(zone) == date } }
-    val maxCount = counts.maxOrNull()?.coerceAtLeast(1) ?: 1
+    val durations = days.map { date -> dailyMillis[date] ?: 0L }
+    val maxDuration = durations.maxOrNull()?.coerceAtLeast(1L) ?: 1L
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             days.forEach { date ->
@@ -835,8 +790,8 @@ private fun WeekHeatmap(today: LocalDate, zone: ZoneId, logs: List<ReviewLogEntr
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            counts.forEach { count ->
-                HeatCell(count, maxCount, Modifier.weight(1f).aspectRatio(1f))
+            durations.forEach { duration ->
+                HeatCell(duration, maxDuration, Modifier.weight(1f).aspectRatio(1f))
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -854,12 +809,16 @@ private fun WeekHeatmap(today: LocalDate, zone: ZoneId, logs: List<ReviewLogEntr
 
 @Composable
 private fun HeatCell(
-    count: Int,
-    maxCount: Int,
+    durationMillis: Long,
+    maxDurationMillis: Long,
     modifier: Modifier = Modifier,
     label: String? = null,
 ) {
-    val intensity = if (count == 0) 0.08f else 0.2f + 0.8f * (count.toFloat() / maxCount)
+    val intensity = if (durationMillis == 0L) {
+        0.08f
+    } else {
+        0.2f + 0.8f * (durationMillis.toFloat() / maxDurationMillis)
+    }
     val normalizedIntensity = intensity.coerceIn(0.08f, 1f)
     Surface(
         modifier = modifier,
@@ -873,8 +832,8 @@ private fun HeatCell(
                     color = if (normalizedIntensity >= 0.62f) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall,
                 )
-                count > 0 -> Text(
-                    count.toString(),
+                durationMillis > 0L -> Text(
+                    (durationMillis / 60_000L).coerceAtLeast(1L).toString(),
                     color = MaterialTheme.colorScheme.onPrimary,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -882,5 +841,3 @@ private fun HeatCell(
         }
     }
 }
-
-private fun Long.toLocalDate(zone: ZoneId): LocalDate = Instant.ofEpochMilli(this).atZone(zone).toLocalDate()

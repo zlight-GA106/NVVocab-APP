@@ -214,6 +214,7 @@ class AppPreferences(context: Context) {
         questionCountText = preferences.getString(KEY_CONTRAST_REVIEW_QUESTIONS, "0").orEmpty(),
         timeLimitText = preferences.getString(KEY_CONTRAST_REVIEW_TIME, "30").orEmpty(),
         hintEnabled = preferences.getBoolean(KEY_CONTRAST_REVIEW_HINT, false),
+        selectedQuizBankId = preferences.getString(KEY_CONTRAST_REVIEW_QUIZ_BANK, null),
     )
 
     fun saveContrastReviewPreferences(value: ContrastReviewPreferences) {
@@ -229,6 +230,7 @@ class AppPreferences(context: Context) {
             .putString(KEY_CONTRAST_REVIEW_QUESTIONS, value.questionCountText)
             .putString(KEY_CONTRAST_REVIEW_TIME, value.timeLimitText)
             .putBoolean(KEY_CONTRAST_REVIEW_HINT, value.hintEnabled)
+            .putString(KEY_CONTRAST_REVIEW_QUIZ_BANK, value.selectedQuizBankId)
             .apply()
     }
 
@@ -262,10 +264,10 @@ class AppPreferences(context: Context) {
             .apply()
     }
 
-    fun readDailyReviewTarget(): Int = preferences.getInt(KEY_DAILY_REVIEW_TARGET, 50).coerceIn(1, 500)
+    fun readDailyReviewTarget(): Int = preferences.getInt(KEY_DAILY_REVIEW_TARGET, 50).coerceAtLeast(1)
 
     fun saveDailyReviewTarget(target: Int) {
-        preferences.edit().putInt(KEY_DAILY_REVIEW_TARGET, target.coerceIn(1, 500)).apply()
+        preferences.edit().putInt(KEY_DAILY_REVIEW_TARGET, target.coerceAtLeast(1)).apply()
     }
 
     fun readStudyTimeGoalMinutes(): Int =
@@ -279,24 +281,38 @@ class AppPreferences(context: Context) {
 
     @Synchronized
     fun readStudyTimeTodayMillis(today: LocalDate = LocalDate.now()): Long {
-        val storedDate = preferences.getString(KEY_STUDY_TIME_DATE, null)
-        if (storedDate == today.toString()) {
-            return preferences.getLong(KEY_STUDY_TIME_MILLIS, 0L).coerceAtLeast(0L)
+        val dailyKey = studyTimeDayKey(today)
+        if (preferences.contains(dailyKey)) {
+            return preferences.getLong(dailyKey, 0L).coerceAtLeast(0L)
         }
-        preferences.edit()
-            .putString(KEY_STUDY_TIME_DATE, today.toString())
-            .putLong(KEY_STUDY_TIME_MILLIS, 0L)
-            .apply()
-        return 0L
+        if (preferences.getString(KEY_STUDY_TIME_DATE, null) != today.toString()) return 0L
+        val legacyMillis = preferences.getLong(KEY_STUDY_TIME_MILLIS, 0L).coerceAtLeast(0L)
+        preferences.edit().putLong(dailyKey, legacyMillis).apply()
+        return legacyMillis
     }
 
     @Synchronized
     fun saveStudyTimeTodayMillis(today: LocalDate, elapsedMillis: Long) {
+        val normalized = elapsedMillis.coerceAtLeast(0L)
         preferences.edit()
             .putString(KEY_STUDY_TIME_DATE, today.toString())
-            .putLong(KEY_STUDY_TIME_MILLIS, elapsedMillis.coerceAtLeast(0L))
+            .putLong(KEY_STUDY_TIME_MILLIS, normalized)
+            .putLong(studyTimeDayKey(today), normalized)
             .apply()
     }
+
+    fun readStudyTimeHistory(endDate: LocalDate = LocalDate.now(), dayCount: Int = 370): Map<LocalDate, Long> {
+        val normalizedDayCount = dayCount.coerceAtLeast(1)
+        return buildMap {
+            repeat(normalizedDayCount) { offset ->
+                val date = endDate.minusDays(offset.toLong())
+                val elapsed = readStudyTimeTodayMillis(date)
+                if (elapsed > 0L) put(date, elapsed)
+            }
+        }
+    }
+
+    private fun studyTimeDayKey(date: LocalDate): String = "$KEY_STUDY_TIME_DAY_PREFIX$date"
 
     fun readDailyProgressSettings(): DailyProgressSettings {
         val reminders = readReminderSettings()
@@ -314,16 +330,16 @@ class AppPreferences(context: Context) {
             contrastTarget = preferences.getInt(
                 KEY_DAILY_CONTRAST_TARGET,
                 reminders.matchingQuestionTarget,
-            ).coerceIn(1, 500),
+            ).coerceAtLeast(1),
             customQuizTarget = preferences.getInt(
                 KEY_DAILY_CUSTOM_QUIZ_TARGET,
                 reminders.questionGroupCount * reminders.questionsPerGroup,
-            ).coerceIn(1, 500),
+            ).coerceAtLeast(1),
         )
     }
 
     fun saveDailyProgressSettings(reference: DailyProgressReference, target: Int) {
-        val normalizedTarget = target.coerceIn(1, 500)
+        val normalizedTarget = target.coerceAtLeast(1)
         val editor = preferences.edit().putString(KEY_DAILY_PROGRESS_REFERENCE, reference.name)
         when (reference) {
             DailyProgressReference.DICTATION -> editor.putInt(KEY_DAILY_REVIEW_TARGET, normalizedTarget)
@@ -463,6 +479,7 @@ class AppPreferences(context: Context) {
         const val KEY_CONTRAST_REVIEW_HINT = "contrast_review_hint"
         const val KEY_CONTRAST_REVIEW_OPTIONS = "contrast_review_options"
         const val KEY_CONTRAST_REVIEW_PROFICIENCY = "contrast_review_proficiency"
+        const val KEY_CONTRAST_REVIEW_QUIZ_BANK = "contrast_review_quiz_bank"
         const val KEY_CONTRAST_REVIEW_QUESTIONS = "contrast_review_max_questions_v2"
         const val KEY_CONTRAST_REVIEW_RANGE = "contrast_review_range"
         const val KEY_CONTRAST_REVIEW_SORT = "contrast_review_sort"
@@ -504,6 +521,7 @@ class AppPreferences(context: Context) {
         const val KEY_SYNC_INTERVAL_MINUTES = "sync_interval_minutes"
         const val KEY_SYNC_MODE = "sync_mode"
         const val KEY_STUDY_TIME_DATE = "study_time_date"
+        const val KEY_STUDY_TIME_DAY_PREFIX = "study_time_day_"
         const val KEY_STUDY_TIME_GOAL_MINUTES = "study_time_goal_minutes"
         const val KEY_STUDY_TIME_MILLIS = "study_time_millis"
         const val KEY_THEME_MODE = "theme_mode"

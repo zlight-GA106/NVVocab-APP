@@ -100,7 +100,6 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
     val snackbarHostState = remember { SnackbarHostState() }
     val tags by viewModel.bookTags.collectAsStateWithLifecycle()
     val words by viewModel.words.collectAsStateWithLifecycle()
-    val reviewLogs by viewModel.reviewLogs.collectAsStateWithLifecycle()
     val quizBanks by viewModel.quizBanks.collectAsStateWithLifecycle()
     val contrastSessions by viewModel.contrastPracticeSessions.collectAsStateWithLifecycle()
     val dailyPracticeProgress by viewModel.dailyPracticeProgress.collectAsStateWithLifecycle()
@@ -138,7 +137,6 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                     state = state,
                     tags = tags,
                     words = words,
-                    reviewLogs = reviewLogs,
                     quizBanks = quizBanks,
                     contrastSessions = contrastSessions,
                     dailyPracticeProgress = dailyPracticeProgress,
@@ -166,7 +164,6 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                 state = state,
                 tags = tags,
                 words = words,
-                reviewLogs = reviewLogs,
                 quizBanks = quizBanks,
                 contrastSessions = contrastSessions,
                 dailyPracticeProgress = dailyPracticeProgress,
@@ -198,7 +195,6 @@ private fun AppScaffold(
     state: AppUiState,
     tags: List<String>,
     words: List<com.zlight106.nvvocab.data.WordEntry>,
-    reviewLogs: List<com.zlight106.nvvocab.data.ReviewLogEntry>,
     quizBanks: List<com.zlight106.nvvocab.data.QuizBank>,
     contrastSessions: List<com.zlight106.nvvocab.data.ContrastPracticeSession>,
     dailyPracticeProgress: com.zlight106.nvvocab.data.DailyPracticeProgress,
@@ -261,7 +257,6 @@ private fun AppScaffold(
                 DashboardScreen(
                     state = state,
                     words = words,
-                    logs = reviewLogs,
                     contrastSessions = contrastSessions,
                     quizBanks = quizBanks,
                     dailyProgress = dailyPracticeProgress,

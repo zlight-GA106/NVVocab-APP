@@ -29,13 +29,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onStart() {
-        super.onStart()
-        (application as NvvocabApplication).studyTimeTracker.start()
-    }
-
-    override fun onStop() {
-        (application as NvvocabApplication).studyTimeTracker.stop()
-        super.onStop()
-    }
 }

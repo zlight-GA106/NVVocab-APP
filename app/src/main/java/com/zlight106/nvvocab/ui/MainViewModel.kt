@@ -441,6 +441,14 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         showMessage("学习时间目标已更新")
     }
 
+    fun startStudyTimeTracking() {
+        application.studyTimeTracker.start()
+    }
+
+    fun stopStudyTimeTracking() {
+        application.studyTimeTracker.stop()
+    }
+
     fun saveContrastPracticePreset(difficulty: PracticeDifficulty, preset: ContrastPracticePreset) {
         preferences.saveContrastPracticePreset(difficulty, preset)
         mutableUiState.value = readUiState(message = "${difficulty.displayName()}预设已保存")

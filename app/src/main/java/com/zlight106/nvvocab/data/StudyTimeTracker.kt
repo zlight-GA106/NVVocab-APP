@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** Tracks foreground study time and persists it per local calendar day. */
+/** Tracks active practice-session time and persists it per local calendar day. */
 class StudyTimeTracker(
     private val preferences: AppPreferences,
     private val onPersistedProgressChanged: () -> Unit,
@@ -21,6 +21,7 @@ class StudyTimeTracker(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var activeDate = LocalDate.now()
     private var storedMillis = preferences.readStudyTimeTodayMillis(activeDate)
+    private val dailyHistory = preferences.readStudyTimeHistory(activeDate).toMutableMap()
     private var sessionStartedAt: Long? = null
     private var ticker: Job? = null
     private var lastPersistedSecond = storedMillis / 1_000L
@@ -62,9 +63,13 @@ class StudyTimeTracker(
     private fun rolloverIfNeeded() {
         val today = LocalDate.now()
         if (today == activeDate) return
+        val previousElapsed = currentElapsedMillis()
+        preferences.saveStudyTimeTodayMillis(activeDate, previousElapsed)
+        dailyHistory[activeDate] = previousElapsed
         activeDate = today
         storedMillis = preferences.readStudyTimeTodayMillis(today)
         sessionStartedAt = sessionStartedAt?.let { SystemClock.elapsedRealtime() }
+        dailyHistory.keys.removeAll { it.isBefore(today.minusDays(HISTORY_DAYS.toLong() - 1L)) }
         lastPersistedSecond = storedMillis / 1_000L
         publish()
         onPersistedProgressChanged()
@@ -83,6 +88,7 @@ class StudyTimeTracker(
     private fun snapshot(): StudyTimeProgress = StudyTimeProgress(
         elapsedMillis = currentElapsedMillis(),
         goalMinutes = preferences.readStudyTimeGoalMinutes(),
+        dailyMillis = dailyHistory + (activeDate to currentElapsedMillis()),
     )
 
     private fun publish() {
@@ -92,7 +98,12 @@ class StudyTimeTracker(
     private fun persist(notifyWidget: Boolean) {
         val elapsed = currentElapsedMillis()
         preferences.saveStudyTimeTodayMillis(activeDate, elapsed)
+        dailyHistory[activeDate] = elapsed
         lastPersistedSecond = elapsed / 1_000L
         if (notifyWidget) onPersistedProgressChanged()
+    }
+
+    private companion object {
+        const val HISTORY_DAYS = 370
     }
 }

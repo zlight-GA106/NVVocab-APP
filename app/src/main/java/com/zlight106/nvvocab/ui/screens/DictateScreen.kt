@@ -128,7 +128,7 @@ fun DictateScreen(
                 )
                 ReviewCategory.CONTRAST -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     AdministratorModeToggle(administratorMode, onAdministratorModeChange)
-                    ContrastPracticePanel(viewModel, words, tags, onStartSession)
+                    ContrastPracticePanel(viewModel, words, tags, quizBanks, onStartSession)
                 }
                 ReviewCategory.WRONG_BOOK -> WrongBookPanel(viewModel, onStartSession)
             }

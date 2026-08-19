@@ -22,7 +22,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +48,7 @@ import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.PracticeRangeMode
 import com.zlight106.nvvocab.data.ProficiencyBand
 import com.zlight106.nvvocab.data.QueueSort
+import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.domain.ContrastPracticePlanner
 import com.zlight106.nvvocab.ui.MainViewModel
@@ -70,6 +70,7 @@ fun ContrastPracticePanel(
     viewModel: MainViewModel,
     words: List<WordEntry>,
     tags: List<String>,
+    quizBanks: List<QuizBank>,
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
     val generationProgress by viewModel.contrastGenerationProgress.collectAsStateWithLifecycle()
@@ -85,7 +86,7 @@ fun ContrastPracticePanel(
     var optionCountText by remember { mutableStateOf(savedPreferences.optionCountText) }
     var questionCountText by remember { mutableStateOf(savedPreferences.questionCountText) }
     var timeLimitText by remember { mutableStateOf(savedPreferences.timeLimitText) }
-    var hintEnabled by remember { mutableStateOf(savedPreferences.hintEnabled) }
+    var selectedQuizBankId by remember { mutableStateOf(savedPreferences.selectedQuizBankId) }
     var showWordPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
     var generating by remember { mutableStateOf(false) }
@@ -110,9 +111,17 @@ fun ContrastPracticePanel(
                 optionCountText = optionCountText,
                 questionCountText = questionCountText,
                 timeLimitText = timeLimitText,
-                hintEnabled = hintEnabled,
+                hintEnabled = false,
+                selectedQuizBankId = selectedQuizBankId,
             ),
         )
+    }
+
+    LaunchedEffect(quizBanks, selectedQuizBankId) {
+        if (selectedQuizBankId != null && quizBanks.none { it.id == selectedQuizBankId }) {
+            selectedQuizBankId = null
+            persist()
+        }
     }
 
     val scopedWords = remember(words, rangeMode, selectedTag, proficiencyBand, selectedWordIds, sort) {
@@ -178,7 +187,7 @@ fun ContrastPracticePanel(
                             practiceType = type,
                             difficulty = difficulty,
                             timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300) ?: 30,
-                            hintEnabled = hintEnabled,
+                            hintEnabled = false,
                         ),
                     )
                 }
@@ -186,8 +195,28 @@ fun ContrastPracticePanel(
         }
     }
 
+    fun startPractice() {
+        val bankId = selectedQuizBankId
+        if (bankId == null) {
+            generate()
+            return
+        }
+        val maximumQuestionCount = questionCountText.toIntOrNull() ?: return
+        if (maximumQuestionCount < 0) return
+        viewModel.loadQuizQuestions(bankId) { questions ->
+            val prepared = if (maximumQuestionCount == 0) {
+                questions
+            } else {
+                questions.take(maximumQuestionCount)
+            }
+            if (prepared.isNotEmpty()) {
+                onStartSession(PracticeSessionRequest.Quiz(queue = prepared))
+            }
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("AI 对照练习", style = MaterialTheme.typography.titleLarge)
+        Text("对照练习", style = MaterialTheme.typography.titleLarge)
         SectionCard {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 NvvDropdown(
@@ -326,49 +355,54 @@ fun ContrastPracticePanel(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        hintEnabled = !hintEnabled
+                NvvDropdown(
+                    label = "从题库选择练习",
+                    value = selectedQuizBankId,
+                    options = listOf(null to "根据当前词库生成") + quizBanks.map { bank ->
+                        bank.id as String? to "${bank.name.ifBlank { "未命名题库" }}（${bank.questionCount} 题）"
+                    },
+                    icon = NvvIcons.FileQuestion,
+                    onChange = {
+                        selectedQuizBankId = it
+                        started = false
+                        finished = false
                         persist()
                     },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Icon(NvvIcons.Eye, null, tint = MaterialTheme.colorScheme.primary)
-                    Column(Modifier.weight(1f)) {
-                        Text("提示模式", style = MaterialTheme.typography.titleSmall)
-                        Text("答题时在卡片边角显示正确答案。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(
-                        checked = hintEnabled,
-                        onCheckedChange = {
-                            hintEnabled = it
-                            persist()
-                        },
-                    )
-                }
+                )
                 val optionCount = optionCountText.toIntOrNull() ?: 0
                 val questionCount = questionCountText.toIntOrNull() ?: 0
                 val timeLimit = timeLimitText.toIntOrNull() ?: 0
-                val configurationValid = optionCount in 2..8 &&
-                    questionCount >= 0 &&
-                    timeLimit in 5..300 &&
-                    scopedWords.isNotEmpty() &&
-                    availableChoiceCount >= optionCount
-                if (optionCount in 2..8 && availableChoiceCount < optionCount) {
+                val selectedQuizBank = quizBanks.firstOrNull { it.id == selectedQuizBankId }
+                val configurationValid = if (selectedQuizBankId != null) {
+                    selectedQuizBank != null && selectedQuizBank.questionCount > 0 && questionCount >= 0
+                } else {
+                    optionCount in 2..8 &&
+                        questionCount >= 0 &&
+                        timeLimit in 5..300 &&
+                        scopedWords.isNotEmpty() &&
+                        availableChoiceCount >= optionCount
+                }
+                if (selectedQuizBankId == null && optionCount in 2..8 && availableChoiceCount < optionCount) {
                     Text(
                         "当前词库只有 $availableChoiceCount 个不重复候选项，请减少选项数量。",
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
                 Button(
-                    onClick = ::generate,
+                    onClick = ::startPractice,
                     enabled = configurationValid && !generating,
                     modifier = Modifier.align(Alignment.End),
                     shape = CircleShape,
                 ) {
                     Icon(NvvIcons.Sparkles, null)
-                    Text(if (generating) "正在生成" else "生成并开始", Modifier.padding(start = 8.dp))
+                    Text(
+                        when {
+                            generating -> "正在生成"
+                            selectedQuizBankId != null -> "开始题库练习"
+                            else -> "生成并开始"
+                        },
+                        Modifier.padding(start = 8.dp),
+                    )
                 }
                 if (generating) {
                     LinearProgressIndicator(
@@ -387,14 +421,14 @@ fun ContrastPracticePanel(
             finished -> ContrastResultPanel(
                 records = records,
                 elapsedSeconds = finalElapsedSeconds,
-                onRestart = ::generate,
+                onRestart = ::startPractice,
             )
             started && queue.isNotEmpty() -> ContrastQuestionCard(
                 question = queue[currentIndex],
                 position = currentIndex + 1,
                 total = queue.size,
                 timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300) ?: 30,
-                hintEnabled = hintEnabled,
+                hintEnabled = false,
                 onAnswered = { selectedIndex ->
                     if (records.none { it.questionId == queue[currentIndex].id }) {
                         records = records + ContrastAnswerRecord(
@@ -417,7 +451,7 @@ fun ContrastPracticePanel(
                                 questionCount = queue.size,
                                 correctCount = records.count(ContrastAnswerRecord::correct),
                                 elapsedSeconds = elapsedSeconds,
-                                hintEnabled = hintEnabled,
+                                hintEnabled = false,
                             ),
                         )
                         started = false

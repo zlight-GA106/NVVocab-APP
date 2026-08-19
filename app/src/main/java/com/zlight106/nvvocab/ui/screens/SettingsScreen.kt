@@ -369,7 +369,7 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
                 value = dailyTarget,
-                onValueChange = { dailyTarget = it.filter(Char::isDigit).take(3) },
+                onValueChange = { dailyTarget = it.filter(Char::isDigit).take(9) },
                 label = { Text("每日复习量目标") },
                 suffix = { Text("词") },
                 enabled = reviewEnabled,
@@ -430,7 +430,7 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
             val parsedPerGroup = questionsPerGroup.toIntOrNull() ?: 0
             val parsedHour = reminderHour.toIntOrNull() ?: -1
             val formValid = parsedMatching in 1..999 &&
-                parsedReview in 1..500 &&
+                parsedReview > 0 &&
                 parsedGroups in 1..99 &&
                 parsedPerGroup in 1..999 &&
                 parsedHour in 0..23

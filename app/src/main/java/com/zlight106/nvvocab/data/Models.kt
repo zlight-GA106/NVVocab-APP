@@ -1,5 +1,7 @@
 package com.zlight106.nvvocab.data
 
+import java.time.LocalDate
+
 data class ParsedWord(
     val spelling: String,
     val phonetic: String,
@@ -327,6 +329,7 @@ data class DailyPracticeProgress(
 data class StudyTimeProgress(
     val elapsedMillis: Long = 0L,
     val goalMinutes: Int = 30,
+    val dailyMillis: Map<LocalDate, Long> = emptyMap(),
 ) {
     val elapsedMinutes: Int
         get() = (elapsedMillis / 60_000L).toInt()
@@ -441,6 +444,7 @@ data class ContrastReviewPreferences(
     val questionCountText: String = "0",
     val timeLimitText: String = "30",
     val hintEnabled: Boolean = false,
+    val selectedQuizBankId: String? = null,
 )
 
 enum class SyncMode {
