@@ -9,11 +9,15 @@ import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.DailyPracticeProgress
 import com.zlight106.nvvocab.data.ParsedQuizBank
+import com.zlight106.nvvocab.data.ParaphraseSeed
+import com.zlight106.nvvocab.data.PracticeAttempt
+import com.zlight106.nvvocab.data.PracticeAttemptMode
 import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.QuizAttempt
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.QuizOption
 import com.zlight106.nvvocab.data.QuizQuestion
+import com.zlight106.nvvocab.data.QuizQuestionType
 import com.zlight106.nvvocab.data.QuizSource
 import com.zlight106.nvvocab.data.ReviewLogEntry
 import com.zlight106.nvvocab.data.TitleListEntry
@@ -80,6 +84,8 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         createDeletedTitleListsTable(database)
         createContrastPracticeTables(database)
         createWrongQuestionsTable(database)
+        createPracticeAttemptsTable(database)
+        createParaphraseSeedTables(database)
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -95,6 +101,12 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         }
         if (oldVersion < 5) createDeletedTitleListsTable(database)
         if (oldVersion < 6) createWrongQuestionsTable(database)
+        if (oldVersion < 7) migrateToQuestionTypes(database)
+        if (oldVersion < 8) createPracticeAttemptsTable(database)
+        if (oldVersion < 9) {
+            database.addColumnIfMissing(TABLE_PRACTICE_ATTEMPTS, "source_id", "TEXT")
+        }
+        if (oldVersion < 10) createParaphraseSeedTables(database)
     }
 
     fun getWords(): List<WordEntry> = readableDatabase.query(
@@ -258,7 +270,176 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             update(TABLE_REVIEW_LOGS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
             update(TABLE_QUIZ_BANKS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
             update(TABLE_WRONG_QUESTIONS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
+            update(TABLE_PRACTICE_ATTEMPTS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
+            update(TABLE_PARAPHRASE_SEEDS, values, "dirty = 1 AND (user_id IS NULL OR user_id = '')", null)
             update(TABLE_DELETED_TITLELISTS, values, "user_id IS NULL OR user_id = ''", null)
+            update(TABLE_DELETED_PARAPHRASE_SEEDS, values, "user_id IS NULL OR user_id = ''", null)
+        }
+    }
+
+    fun insertPracticeAttempts(attempts: List<PracticeAttempt>) {
+        if (attempts.isEmpty()) return
+        writableDatabase.inTransaction {
+            attempts.forEach { attempt ->
+                insertWithOnConflict(
+                    TABLE_PRACTICE_ATTEMPTS,
+                    null,
+                    attempt.toContentValues(),
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+        }
+    }
+
+    fun getPracticeAttempts(): List<PracticeAttempt> = readableDatabase.query(
+        TABLE_PRACTICE_ATTEMPTS,
+        PRACTICE_ATTEMPT_COLUMNS,
+        null,
+        null,
+        null,
+        null,
+        "answered_at ASC, sequence_index ASC, id ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.toPracticeAttempt())
+        }
+    }
+
+    fun getDirtyPracticeAttempts(): List<PracticeAttempt> = readableDatabase.query(
+        TABLE_PRACTICE_ATTEMPTS,
+        PRACTICE_ATTEMPT_COLUMNS,
+        "dirty = 1",
+        null,
+        null,
+        null,
+        "answered_at ASC, sequence_index ASC, id ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.toPracticeAttempt())
+        }
+    }
+
+    fun upsertRemotePracticeAttempts(attempts: List<PracticeAttempt>) {
+        if (attempts.isEmpty()) return
+        writableDatabase.inTransaction {
+            attempts.forEach { attempt ->
+                insertWithOnConflict(
+                    TABLE_PRACTICE_ATTEMPTS,
+                    null,
+                    attempt.copy(dirty = false).toContentValues(),
+                    SQLiteDatabase.CONFLICT_IGNORE,
+                )
+            }
+        }
+    }
+
+    fun markPracticeAttemptsClean(ids: List<String>) {
+        if (ids.isEmpty()) return
+        writableDatabase.inTransaction {
+            val values = ContentValues().apply { put("dirty", 0) }
+            ids.forEach { id -> update(TABLE_PRACTICE_ATTEMPTS, values, "id = ?", arrayOf(id)) }
+        }
+    }
+
+    fun getParaphraseSeeds(): List<ParaphraseSeed> = readableDatabase.query(
+        TABLE_PARAPHRASE_SEEDS,
+        PARAPHRASE_SEED_COLUMNS,
+        null,
+        null,
+        null,
+        null,
+        "created_at ASC, id ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.toParaphraseSeed())
+        }
+    }
+
+    fun getDirtyParaphraseSeeds(): List<ParaphraseSeed> = readableDatabase.query(
+        TABLE_PARAPHRASE_SEEDS,
+        PARAPHRASE_SEED_COLUMNS,
+        "dirty = 1",
+        null,
+        null,
+        null,
+        "updated_at ASC, id ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.toParaphraseSeed())
+        }
+    }
+
+    fun upsertParaphraseSeeds(entries: List<ParaphraseSeed>) {
+        if (entries.isEmpty()) return
+        writableDatabase.inTransaction {
+            entries.forEach { entry ->
+                insertWithOnConflict(
+                    TABLE_PARAPHRASE_SEEDS,
+                    null,
+                    entry.toContentValues(),
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+        }
+    }
+
+    fun upsertRemoteParaphraseSeeds(entries: List<ParaphraseSeed>) {
+        if (entries.isEmpty()) return
+        val dirtyIds = getDirtyParaphraseSeeds().mapTo(mutableSetOf(), ParaphraseSeed::id)
+        writableDatabase.inTransaction {
+            entries.filterNot { it.id in dirtyIds }.forEach { entry ->
+                insertWithOnConflict(
+                    TABLE_PARAPHRASE_SEEDS,
+                    null,
+                    entry.copy(dirty = false).toContentValues(),
+                    SQLiteDatabase.CONFLICT_REPLACE,
+                )
+            }
+        }
+    }
+
+    fun deleteParaphraseSeed(id: String, userId: String?, deletedAt: Long) {
+        writableDatabase.inTransaction {
+            delete(TABLE_PARAPHRASE_SEEDS, "id = ?", arrayOf(id))
+            insertWithOnConflict(
+                TABLE_DELETED_PARAPHRASE_SEEDS,
+                null,
+                ContentValues().apply {
+                    put("id", id)
+                    put("user_id", userId)
+                    put("deleted_at", deletedAt)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+        }
+    }
+
+    fun getDeletedParaphraseSeedIds(): List<String> = readableDatabase.query(
+        TABLE_DELETED_PARAPHRASE_SEEDS,
+        arrayOf("id"),
+        null,
+        null,
+        null,
+        null,
+        "deleted_at ASC",
+    ).use { cursor ->
+        buildList {
+            while (cursor.moveToNext()) add(cursor.getString(0))
+        }
+    }
+
+    fun clearDeletedParaphraseSeeds(ids: List<String>) {
+        if (ids.isEmpty()) return
+        writableDatabase.inTransaction {
+            ids.forEach { id -> delete(TABLE_DELETED_PARAPHRASE_SEEDS, "id = ?", arrayOf(id)) }
+        }
+    }
+
+    fun markParaphraseSeedsClean(ids: List<String>) {
+        if (ids.isEmpty()) return
+        writableDatabase.inTransaction {
+            val values = ContentValues().apply { put("dirty", 0) }
+            ids.forEach { id -> update(TABLE_PARAPHRASE_SEEDS, values, "id = ?", arrayOf(id)) }
         }
     }
 
@@ -362,6 +543,12 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                         put("original_index", parsedQuestion.originalIndex)
                         put("score", parsedQuestion.score)
                         put("text", parsedQuestion.text)
+                        put("question_type", parsedQuestion.type.name)
+                        put("reference_answer", parsedQuestion.referenceAnswer)
+                        put("accepted_answers_json", JSONArray(parsedQuestion.acceptedAnswers.sorted()).toString())
+                        put("explanation", parsedQuestion.explanation)
+                        put("category", parsedQuestion.category)
+                        put("source_reference", parsedQuestion.sourceReference)
                     },
                 )
                 parsedQuestion.options.forEach { option ->
@@ -497,7 +684,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         }
         return readableDatabase.query(
             TABLE_QUIZ_QUESTIONS,
-            arrayOf("id", "bank_id", "original_index", "score", "text"),
+            QUIZ_QUESTION_COLUMNS,
             "bank_id = ?",
             arrayOf(bankId),
             null,
@@ -516,6 +703,12 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                             text = cursor.getString(cursor.getColumnIndexOrThrow("text")),
                             options = optionsByQuestion[questionId].orEmpty(),
                             answers = answersByQuestion[questionId].orEmpty(),
+                            type = cursor.enumOrDefault("question_type", QuizQuestionType.MULTIPLE_CHOICE),
+                            referenceAnswer = cursor.getStringOrNull("reference_answer"),
+                            acceptedAnswers = cursor.getStringOrNull("accepted_answers_json").toStringSet(),
+                            explanation = cursor.getStringOrNull("explanation"),
+                            category = cursor.getStringOrNull("category"),
+                            sourceReference = cursor.getStringOrNull("source_reference"),
                         ),
                     )
                 }
@@ -535,6 +728,9 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                 put("selected_answers", attempt.selectedAnswers.sorted().joinToString(","))
                 put("correct", if (attempt.correct) 1 else 0)
                 put("score_gained", attempt.scoreGained)
+                put("user_answer", attempt.userAnswer)
+                put("hint_used", if (attempt.hintUsed) 1 else 0)
+                put("evaluation_result", attempt.evaluationResult.name)
             },
         )
     }
@@ -560,7 +756,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             results.forEachIndexed { index, result ->
                 val existing = query(
                     TABLE_WRONG_QUESTIONS,
-                    arrayOf("id", "wrong_count", "correct_count", "last_wrong_at"),
+                    arrayOf("id", "wrong_count", "correct_count", "last_wrong_at", "hint_used_count"),
                     "source = ? AND question_key = ?",
                     arrayOf(result.source.name, result.questionKey),
                     null,
@@ -573,6 +769,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                         wrongCount = cursor.getInt(1),
                         correctCount = cursor.getInt(2),
                         lastWrongAt = cursor.getLong(3),
+                        hintUsedCount = cursor.getInt(4),
                     )
                 }
                 if (existing == null && result.correct) return@forEachIndexed
@@ -586,8 +783,16 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                     put("question_text", result.questionText)
                     put("options_json", result.options.toJson().toString())
                     put("correct_answers_json", JSONArray(result.correctAnswers.sorted()).toString())
+                    put("question_type", result.questionType.name)
+                    put("reference_answer", result.referenceAnswer)
+                    put("accepted_answers_json", JSONArray(result.acceptedAnswers.sorted()).toString())
+                    put("explanation", result.explanation)
+                    put("category", result.category)
+                    put("source_reference", result.sourceReference)
+                    put("last_user_answer", result.userAnswer)
                     put("wrong_count", (existing?.wrongCount ?: 0) + if (result.correct) 0 else 1)
                     put("correct_count", (existing?.correctCount ?: 0) + if (result.correct) 1 else 0)
+                    put("hint_used_count", (existing?.hintUsedCount ?: 0) + if (result.hintUsed) 1 else 0)
                     put("last_wrong_at", if (result.correct) existing?.lastWrongAt ?: answeredAt else answeredAt)
                     put("last_reviewed_at", answeredAt)
                     put("dirty", 1)
@@ -828,6 +1033,42 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         put("dirty", if (dirty) 1 else 0)
     }
 
+    private fun PracticeAttempt.toContentValues(): ContentValues = ContentValues().apply {
+        put("id", id)
+        put("user_id", userId)
+        put("session_id", sessionId)
+        put("item_id", itemId)
+        put("source_id", sourceId)
+        put("mode", mode.name)
+        put("sequence_index", sequenceIndex)
+        put("question", question)
+        put("options_json", options.toJson().toString())
+        put("first_answer", firstAnswer)
+        put("final_answer", finalAnswer)
+        put("reference_answer", referenceAnswer)
+        put("accepted_answers_json", JSONArray(acceptedAnswers.sorted()).toString())
+        put("explanation", explanation)
+        put("correct", if (correct) 1 else 0)
+        put("first_answer_correct", if (firstAnswerCorrect) 1 else 0)
+        put("active_time_ms", activeTimeMs.coerceAtLeast(0L))
+        put("hint_used", if (hintUsed) 1 else 0)
+        put("answered_at", timestamp)
+        put("dirty", if (dirty) 1 else 0)
+    }
+
+    private fun ParaphraseSeed.toContentValues(): ContentValues = ContentValues().apply {
+        put("id", id)
+        put("user_id", userId)
+        put("source_text", sourceText)
+        put("target_text", targetText)
+        put("context_text", contextText)
+        put("source_reference", sourceReference)
+        put("notes", notes)
+        put("created_at", createdAt)
+        put("updated_at", updatedAt)
+        put("dirty", if (dirty) 1 else 0)
+    }
+
     private fun WrongQuestionEntry.toContentValues(): ContentValues = ContentValues().apply {
         put("id", id)
         put("user_id", userId)
@@ -838,6 +1079,14 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         put("question_text", questionText)
         put("options_json", options.toJson().toString())
         put("correct_answers_json", JSONArray(correctAnswers.sorted()).toString())
+        put("question_type", questionType.name)
+        put("reference_answer", referenceAnswer)
+        put("accepted_answers_json", JSONArray(acceptedAnswers.sorted()).toString())
+        put("explanation", explanation)
+        put("category", category)
+        put("source_reference", sourceReference)
+        put("last_user_answer", lastUserAnswer)
+        put("hint_used_count", hintUsedCount)
         put("wrong_count", wrongCount)
         put("correct_count", correctCount)
         put("favorite", if (favorite) 1 else 0)
@@ -882,6 +1131,14 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             lastWrongAt = getLong(getColumnIndexOrThrow("last_wrong_at")),
             lastReviewedAt = getLongOrNull("last_reviewed_at"),
             dirty = getInt(getColumnIndexOrThrow("dirty")) == 1,
+            questionType = enumOrDefault("question_type", QuizQuestionType.MULTIPLE_CHOICE),
+            referenceAnswer = getStringOrNull("reference_answer"),
+            acceptedAnswers = getStringOrNull("accepted_answers_json").toStringSet(),
+            explanation = getStringOrNull("explanation"),
+            category = getStringOrNull("category"),
+            sourceReference = getStringOrNull("source_reference"),
+            lastUserAnswer = getStringOrNull("last_user_answer"),
+            hintUsedCount = getInt(getColumnIndexOrThrow("hint_used_count")),
         )
     }
 
@@ -910,6 +1167,42 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         dirty = getInt(getColumnIndexOrThrow("dirty")) == 1,
     )
 
+    private fun Cursor.toPracticeAttempt(): PracticeAttempt = PracticeAttempt(
+        id = getString(getColumnIndexOrThrow("id")),
+        userId = getStringOrNull("user_id"),
+        sessionId = getString(getColumnIndexOrThrow("session_id")),
+        itemId = getString(getColumnIndexOrThrow("item_id")),
+        sourceId = getStringOrNull("source_id"),
+        mode = enumOrDefault("mode", PracticeAttemptMode.QUIZ_CHOICE),
+        sequenceIndex = getInt(getColumnIndexOrThrow("sequence_index")),
+        question = getString(getColumnIndexOrThrow("question")),
+        options = getString(getColumnIndexOrThrow("options_json")).toQuizOptions(),
+        firstAnswer = getString(getColumnIndexOrThrow("first_answer")),
+        finalAnswer = getString(getColumnIndexOrThrow("final_answer")),
+        referenceAnswer = getString(getColumnIndexOrThrow("reference_answer")),
+        acceptedAnswers = getStringOrNull("accepted_answers_json").toStringSet(),
+        explanation = getStringOrNull("explanation"),
+        correct = getInt(getColumnIndexOrThrow("correct")) == 1,
+        firstAnswerCorrect = getInt(getColumnIndexOrThrow("first_answer_correct")) == 1,
+        activeTimeMs = getLong(getColumnIndexOrThrow("active_time_ms")),
+        hintUsed = getInt(getColumnIndexOrThrow("hint_used")) == 1,
+        timestamp = getLong(getColumnIndexOrThrow("answered_at")),
+        dirty = getInt(getColumnIndexOrThrow("dirty")) == 1,
+    )
+
+    private fun Cursor.toParaphraseSeed(): ParaphraseSeed = ParaphraseSeed(
+        id = getString(getColumnIndexOrThrow("id")),
+        userId = getStringOrNull("user_id"),
+        sourceText = getString(getColumnIndexOrThrow("source_text")),
+        targetText = getString(getColumnIndexOrThrow("target_text")),
+        contextText = getStringOrNull("context_text"),
+        sourceReference = getStringOrNull("source_reference"),
+        notes = getStringOrNull("notes"),
+        createdAt = getLong(getColumnIndexOrThrow("created_at")),
+        updatedAt = getLong(getColumnIndexOrThrow("updated_at")),
+        dirty = getInt(getColumnIndexOrThrow("dirty")) == 1,
+    )
+
     private fun Cursor.getStringOrNull(column: String): String? {
         val index = getColumnIndexOrThrow(column)
         return if (isNull(index)) null else getString(index)
@@ -918,6 +1211,31 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     private fun Cursor.getLongOrNull(column: String): Long? {
         val index = getColumnIndexOrThrow(column)
         return if (isNull(index)) null else getLong(index)
+    }
+
+    private fun String?.toStringSet(): Set<String> {
+        if (isNullOrBlank()) return emptySet()
+        return runCatching {
+            val payload = JSONArray(this)
+            buildSet {
+                for (index in 0 until payload.length()) {
+                    payload.optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
+                }
+            }
+        }.getOrDefault(emptySet())
+    }
+
+    private fun String?.toQuizOptions(): List<QuizOption> {
+        if (isNullOrBlank()) return emptyList()
+        return runCatching {
+            val payload = JSONArray(this)
+            buildList {
+                for (index in 0 until payload.length()) {
+                    val item = payload.optJSONObject(index) ?: continue
+                    add(QuizOption(item.optString("id"), item.optString("text")))
+                }
+            }
+        }.getOrDefault(emptyList())
     }
 
     private inline fun <reified T : Enum<T>> Cursor.enumOrNull(column: String): T? =
@@ -936,6 +1254,12 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                 put("original_index", question.originalIndex)
                 put("score", question.score)
                 put("text", question.text)
+                put("question_type", question.type.name)
+                put("reference_answer", question.referenceAnswer)
+                put("accepted_answers_json", JSONArray(question.acceptedAnswers.sorted()).toString())
+                put("explanation", question.explanation)
+                put("category", question.category)
+                put("source_reference", question.sourceReference)
             },
         )
         question.options.forEach { option ->
@@ -990,6 +1314,12 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                 original_index INTEGER NOT NULL,
                 score INTEGER NOT NULL DEFAULT 0,
                 text TEXT NOT NULL,
+                question_type TEXT NOT NULL DEFAULT 'MULTIPLE_CHOICE',
+                reference_answer TEXT,
+                accepted_answers_json TEXT NOT NULL DEFAULT '[]',
+                explanation TEXT,
+                category TEXT,
+                source_reference TEXT,
                 FOREIGN KEY(bank_id) REFERENCES quiz_banks(id) ON DELETE CASCADE
             )
             """.trimIndent(),
@@ -1025,6 +1355,9 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                 selected_answers TEXT NOT NULL,
                 correct INTEGER NOT NULL,
                 score_gained INTEGER NOT NULL,
+                user_answer TEXT,
+                hint_used INTEGER NOT NULL DEFAULT 0,
+                evaluation_result TEXT NOT NULL DEFAULT 'INCORRECT',
                 FOREIGN KEY(bank_id) REFERENCES quiz_banks(id) ON DELETE CASCADE,
                 FOREIGN KEY(question_id) REFERENCES quiz_questions(id) ON DELETE CASCADE
             )
@@ -1080,6 +1413,14 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
                 question_text TEXT NOT NULL,
                 options_json TEXT NOT NULL,
                 correct_answers_json TEXT NOT NULL,
+                question_type TEXT NOT NULL DEFAULT 'MULTIPLE_CHOICE',
+                reference_answer TEXT,
+                accepted_answers_json TEXT NOT NULL DEFAULT '[]',
+                explanation TEXT,
+                category TEXT,
+                source_reference TEXT,
+                last_user_answer TEXT,
+                hint_used_count INTEGER NOT NULL DEFAULT 0,
                 wrong_count INTEGER NOT NULL DEFAULT 1,
                 correct_count INTEGER NOT NULL DEFAULT 0,
                 favorite INTEGER NOT NULL DEFAULT 0,
@@ -1099,6 +1440,126 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         )
     }
 
+    private fun createPracticeAttemptsTable(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS practice_attempts (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT,
+                session_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                source_id TEXT,
+                mode TEXT NOT NULL,
+                sequence_index INTEGER NOT NULL,
+                question TEXT NOT NULL,
+                options_json TEXT NOT NULL DEFAULT '[]',
+                first_answer TEXT NOT NULL DEFAULT '',
+                final_answer TEXT NOT NULL DEFAULT '',
+                reference_answer TEXT NOT NULL DEFAULT '',
+                accepted_answers_json TEXT NOT NULL DEFAULT '[]',
+                explanation TEXT,
+                correct INTEGER NOT NULL,
+                first_answer_correct INTEGER NOT NULL,
+                active_time_ms INTEGER NOT NULL,
+                hint_used INTEGER NOT NULL DEFAULT 0,
+                answered_at INTEGER NOT NULL,
+                dirty INTEGER NOT NULL DEFAULT 1
+            )
+            """.trimIndent(),
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_practice_attempt_session_item " +
+                "ON practice_attempts(session_id, sequence_index)",
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_practice_attempt_item_mode " +
+                "ON practice_attempts(item_id, mode, answered_at ASC)",
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_practice_attempt_dirty ON practice_attempts(dirty)",
+        )
+    }
+
+    private fun createParaphraseSeedTables(database: SQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS paraphrase_seeds (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT,
+                source_text TEXT NOT NULL,
+                target_text TEXT NOT NULL,
+                context_text TEXT,
+                source_reference TEXT,
+                notes TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                dirty INTEGER NOT NULL DEFAULT 1
+            )
+            """.trimIndent(),
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_paraphrase_seeds_updated " +
+                "ON paraphrase_seeds(updated_at DESC, id ASC)",
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_paraphrase_seeds_source " +
+                "ON paraphrase_seeds(source_reference COLLATE NOCASE)",
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_paraphrase_seeds_dirty ON paraphrase_seeds(dirty)",
+        )
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS deleted_paraphrase_seeds (
+                id TEXT PRIMARY KEY NOT NULL,
+                user_id TEXT,
+                deleted_at INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
+
+    private fun migrateToQuestionTypes(database: SQLiteDatabase) {
+        database.addColumnIfMissing(
+            TABLE_QUIZ_QUESTIONS,
+            "question_type",
+            "TEXT NOT NULL DEFAULT 'MULTIPLE_CHOICE'",
+        )
+        database.addColumnIfMissing(TABLE_QUIZ_QUESTIONS, "reference_answer", "TEXT")
+        database.addColumnIfMissing(TABLE_QUIZ_QUESTIONS, "accepted_answers_json", "TEXT NOT NULL DEFAULT '[]'")
+        database.addColumnIfMissing(TABLE_QUIZ_QUESTIONS, "explanation", "TEXT")
+        database.addColumnIfMissing(TABLE_QUIZ_QUESTIONS, "category", "TEXT")
+        database.addColumnIfMissing(TABLE_QUIZ_QUESTIONS, "source_reference", "TEXT")
+        database.addColumnIfMissing(TABLE_QUIZ_ATTEMPTS, "user_answer", "TEXT")
+        database.addColumnIfMissing(TABLE_QUIZ_ATTEMPTS, "hint_used", "INTEGER NOT NULL DEFAULT 0")
+        database.addColumnIfMissing(
+            TABLE_QUIZ_ATTEMPTS,
+            "evaluation_result",
+            "TEXT NOT NULL DEFAULT 'INCORRECT'",
+        )
+        database.addColumnIfMissing(
+            TABLE_WRONG_QUESTIONS,
+            "question_type",
+            "TEXT NOT NULL DEFAULT 'MULTIPLE_CHOICE'",
+        )
+        database.addColumnIfMissing(TABLE_WRONG_QUESTIONS, "reference_answer", "TEXT")
+        database.addColumnIfMissing(TABLE_WRONG_QUESTIONS, "accepted_answers_json", "TEXT NOT NULL DEFAULT '[]'")
+        database.addColumnIfMissing(TABLE_WRONG_QUESTIONS, "explanation", "TEXT")
+        database.addColumnIfMissing(TABLE_WRONG_QUESTIONS, "category", "TEXT")
+        database.addColumnIfMissing(TABLE_WRONG_QUESTIONS, "source_reference", "TEXT")
+        database.addColumnIfMissing(TABLE_WRONG_QUESTIONS, "last_user_answer", "TEXT")
+        database.addColumnIfMissing(TABLE_WRONG_QUESTIONS, "hint_used_count", "INTEGER NOT NULL DEFAULT 0")
+    }
+
+    private fun SQLiteDatabase.addColumnIfMissing(table: String, column: String, declaration: String) {
+        val exists = rawQuery("PRAGMA table_info($table)", null).use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            generateSequence { if (cursor.moveToNext()) cursor.getString(nameIndex) else null }
+                .any { it == column }
+        }
+        if (!exists) execSQL("ALTER TABLE $table ADD COLUMN $column $declaration")
+    }
+
     private fun putNullIfMissing(values: ContentValues, key: String) {
         if (!values.containsKey(key)) values.putNull(key)
     }
@@ -1108,6 +1569,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         val wrongCount: Int,
         val correctCount: Int,
         val lastWrongAt: Long,
+        val hintUsedCount: Int,
     )
 
     private inline fun SQLiteDatabase.inTransaction(block: SQLiteDatabase.() -> Unit) {
@@ -1122,7 +1584,8 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "nvvocab.db"
-        const val DATABASE_VERSION = 6
+        const val DATABASE_VERSION = 10
+        const val TABLE_DELETED_PARAPHRASE_SEEDS = "deleted_paraphrase_seeds"
         const val TABLE_DELETED_TITLELISTS = "deleted_titlelists"
         const val TABLE_CONTRAST_SESSIONS = "contrast_practice_sessions"
         const val TABLE_QUIZ_ANSWERS = "quiz_answers"
@@ -1130,6 +1593,8 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         const val TABLE_QUIZ_BANKS = "quiz_banks"
         const val TABLE_QUIZ_OPTIONS = "quiz_options"
         const val TABLE_QUIZ_QUESTIONS = "quiz_questions"
+        const val TABLE_PRACTICE_ATTEMPTS = "practice_attempts"
+        const val TABLE_PARAPHRASE_SEEDS = "paraphrase_seeds"
         const val TABLE_REVIEW_LOGS = "review_logs"
         const val TABLE_WORDS = "words"
         const val TABLE_WRONG_QUESTIONS = "wrong_questions"
@@ -1157,6 +1622,40 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             "quality",
             "dirty",
         )
+        val PRACTICE_ATTEMPT_COLUMNS = arrayOf(
+            "id",
+            "user_id",
+            "session_id",
+            "item_id",
+            "source_id",
+            "mode",
+            "sequence_index",
+            "question",
+            "options_json",
+            "first_answer",
+            "final_answer",
+            "reference_answer",
+            "accepted_answers_json",
+            "explanation",
+            "correct",
+            "first_answer_correct",
+            "active_time_ms",
+            "hint_used",
+            "answered_at",
+            "dirty",
+        )
+        val PARAPHRASE_SEED_COLUMNS = arrayOf(
+            "id",
+            "user_id",
+            "source_text",
+            "target_text",
+            "context_text",
+            "source_reference",
+            "notes",
+            "created_at",
+            "updated_at",
+            "dirty",
+        )
         val WRONG_QUESTION_COLUMNS = arrayOf(
             "id",
             "user_id",
@@ -1167,6 +1666,14 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             "question_text",
             "options_json",
             "correct_answers_json",
+            "question_type",
+            "reference_answer",
+            "accepted_answers_json",
+            "explanation",
+            "category",
+            "source_reference",
+            "last_user_answer",
+            "hint_used_count",
             "wrong_count",
             "correct_count",
             "favorite",
@@ -1174,6 +1681,19 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             "last_wrong_at",
             "last_reviewed_at",
             "dirty",
+        )
+        val QUIZ_QUESTION_COLUMNS = arrayOf(
+            "id",
+            "bank_id",
+            "original_index",
+            "score",
+            "text",
+            "question_type",
+            "reference_answer",
+            "accepted_answers_json",
+            "explanation",
+            "category",
+            "source_reference",
         )
     }
 }

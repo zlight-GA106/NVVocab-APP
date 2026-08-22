@@ -51,6 +51,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.content.ContextCompat
 import com.zlight106.nvvocab.data.AiProvider
 import com.zlight106.nvvocab.data.AiSettings
+import com.zlight106.nvvocab.data.DEFAULT_AI_PROMPT
+import com.zlight106.nvvocab.data.DEFAULT_FILL_BLANK_EVALUATION_PROMPT
+import com.zlight106.nvvocab.data.DEFAULT_MIXED_REVIEW_PROMPT
 import com.zlight106.nvvocab.data.DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.ThemeMode
@@ -75,6 +78,12 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
     var aiApiKey by remember(state.aiSettings.apiKey) { mutableStateOf(state.aiSettings.apiKey) }
     var aiModel by remember(state.aiSettings.model) { mutableStateOf(state.aiSettings.model) }
     var aiPrompt by remember(state.aiSettings.systemPrompt) { mutableStateOf(state.aiSettings.systemPrompt) }
+    var aiMixedReviewPrompt by remember(state.aiSettings.mixedReviewPrompt) {
+        mutableStateOf(state.aiSettings.mixedReviewPrompt)
+    }
+    var aiFillBlankEvaluationPrompt by remember(state.aiSettings.fillBlankEvaluationPrompt) {
+        mutableStateOf(state.aiSettings.fillBlankEvaluationPrompt)
+    }
     var aiAnalysisPrompt by remember(state.aiSettings.analysisPrompt) {
         mutableStateOf(state.aiSettings.analysisPrompt)
     }
@@ -214,8 +223,24 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                 modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp),
                 value = aiPrompt,
                 onValueChange = { aiPrompt = it },
-                label = { Text("系统提示词") },
+                label = { Text("对照练习生成提示词") },
                 supportingText = { Text("AI 对照练习生成将使用此提示词。") },
+                shape = MaterialTheme.shapes.extraLarge,
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
+                value = aiMixedReviewPrompt,
+                onValueChange = { aiMixedReviewPrompt = it },
+                label = { Text("混合模式生成提示词") },
+                supportingText = { Text("混合复习中的中翻英与英翻中题目将使用此提示词；语义压缩题由本地种子生成。") },
+                shape = MaterialTheme.shapes.extraLarge,
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
+                value = aiFillBlankEvaluationPrompt,
+                onValueChange = { aiFillBlankEvaluationPrompt = it },
+                label = { Text("填空题自动评分提示词") },
+                supportingText = { Text("本地精确匹配无法判定时，AI 将使用此提示词复核答案。") },
                 shape = MaterialTheme.shapes.extraLarge,
             )
             OutlinedTextField(
@@ -227,12 +252,17 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                 shape = MaterialTheme.shapes.extraLarge,
             )
             OutlinedButton(
-                onClick = { aiAnalysisPrompt = DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT },
+                onClick = {
+                    aiPrompt = DEFAULT_AI_PROMPT
+                    aiMixedReviewPrompt = DEFAULT_MIXED_REVIEW_PROMPT
+                    aiFillBlankEvaluationPrompt = DEFAULT_FILL_BLANK_EVALUATION_PROMPT
+                    aiAnalysisPrompt = DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT
+                },
                 shape = CircleShape,
                 modifier = Modifier.align(Alignment.End),
             ) {
                 Icon(NvvIcons.RefreshCw, contentDescription = null)
-                Text("恢复默认提示词", Modifier.padding(start = 8.dp))
+                Text("恢复全部默认提示词", Modifier.padding(start = 8.dp))
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -248,6 +278,8 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                                 apiKey = aiApiKey,
                                 model = aiModel,
                                 systemPrompt = aiPrompt,
+                                mixedReviewPrompt = aiMixedReviewPrompt,
+                                fillBlankEvaluationPrompt = aiFillBlankEvaluationPrompt,
                                 analysisPrompt = aiAnalysisPrompt,
                             ),
                         )
@@ -267,12 +299,15 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                                 apiKey = aiApiKey,
                                 model = aiModel,
                                 systemPrompt = aiPrompt,
+                                mixedReviewPrompt = aiMixedReviewPrompt,
+                                fillBlankEvaluationPrompt = aiFillBlankEvaluationPrompt,
                                 analysisPrompt = aiAnalysisPrompt,
                             ),
                         )
                     },
                     enabled = aiBaseUrl.isNotBlank() && aiModel.isNotBlank() &&
-                        aiPrompt.isNotBlank() && aiAnalysisPrompt.isNotBlank(),
+                        aiPrompt.isNotBlank() && aiMixedReviewPrompt.isNotBlank() &&
+                        aiFillBlankEvaluationPrompt.isNotBlank() && aiAnalysisPrompt.isNotBlank(),
                     shape = CircleShape,
                     modifier = Modifier.padding(start = 8.dp),
                 ) { Text("保存 AI 设置") }

@@ -2,10 +2,14 @@ package com.zlight106.nvvocab.data.network
 
 import com.zlight106.nvvocab.data.AiSettings
 import com.zlight106.nvvocab.data.AiProvider
+import com.zlight106.nvvocab.data.AnswerEvaluationResult
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.ContrastQuestion
+import com.zlight106.nvvocab.data.FillBlankEvaluation
 import com.zlight106.nvvocab.data.ParsedQuizQuestion
 import com.zlight106.nvvocab.data.PracticeDifficulty
+import com.zlight106.nvvocab.data.QuizQuestion
+import com.zlight106.nvvocab.data.QuizQuestionType
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.data.formatOptionAnswers
@@ -94,17 +98,32 @@ class AiPracticeGateway {
     ): String = withContext(Dispatchers.IO) {
         validateSettings(settings)
         require(settings.analysisPrompt.isNotBlank()) { "请先配置错题解析提示词。" }
-        val options = entry.options.joinToString("\n") { "${it.id}. ${it.text}" }
-        val correctAnswerDetails = formatOptionAnswers(entry.options, entry.correctAnswers)
-        val questionContext = """
-            题库：${entry.bankName}
-            题目：${entry.questionText}
-            选项：
-            $options
-            正确答案：$correctAnswerDetails
-            历史错误次数：${entry.wrongCount}
-            历史正确次数：${entry.correctCount}
-        """.trimIndent()
+        val questionContext = if (entry.questionType == QuizQuestionType.FILL_BLANK) {
+            """
+                题库：${entry.bankName}
+                题型：填空题
+                题目：${entry.questionText}
+                用户最近答案：${entry.lastUserAnswer.orEmpty()}
+                参考答案：${entry.referenceAnswer.orEmpty()}
+                可接受答案：${entry.acceptedAnswers.joinToString("；")}
+                参考解析：${entry.explanation.orEmpty()}
+                历史错误次数：${entry.wrongCount}
+                历史正确次数：${entry.correctCount}
+                使用提示次数：${entry.hintUsedCount}
+            """.trimIndent()
+        } else {
+            val options = entry.options.joinToString("\n") { "${it.id}. ${it.text}" }
+            val correctAnswerDetails = formatOptionAnswers(entry.options, entry.correctAnswers)
+            """
+                题库：${entry.bankName}
+                题目：${entry.questionText}
+                选项：
+                $options
+                正确答案：$correctAnswerDetails
+                历史错误次数：${entry.wrongCount}
+                历史正确次数：${entry.correctCount}
+            """.trimIndent()
+        }
         val body = JSONObject()
             .put("model", settings.model)
             .put(
@@ -130,6 +149,61 @@ class AiPracticeGateway {
             .trim()
         require(content.isNotBlank()) { "AI 未返回有效的错题解析。" }
         content
+    }
+
+    suspend fun evaluateFillBlankAnswer(
+        settings: AiSettings,
+        question: QuizQuestion,
+        userAnswer: String,
+    ): FillBlankEvaluation = withContext(Dispatchers.IO) {
+        validateSettings(settings)
+        require(settings.fillBlankEvaluationPrompt.isNotBlank()) { "请先配置填空题自动评分提示词。" }
+        val context = JSONObject()
+            .put("question", question.text)
+            .put("reference_answer", question.referenceAnswer.orEmpty())
+            .put("accepted_answers", JSONArray(question.acceptedAnswers.sorted()))
+            .put("explanation", question.explanation.orEmpty())
+            .put("user_answer", userAnswer)
+            .toString()
+        val body = JSONObject()
+            .put("model", settings.model)
+            .put(
+                "messages",
+                JSONArray()
+                    .put(
+                        JSONObject()
+                            .put("role", "system")
+                            .put("content", settings.fillBlankEvaluationPrompt),
+                    )
+                    .put(JSONObject().put("role", "user").put("content", context)),
+            )
+            .put("temperature", 0)
+            .put("max_tokens", 180)
+            .put("stream", false)
+            .apply {
+                if (settings.provider == AiProvider.DEEPSEEK) {
+                    put("thinking", JSONObject().put("type", "disabled"))
+                }
+            }
+        val response = JSONObject(executeRequest(settings, body))
+        val rawContent = response.optJSONArray("choices")
+            ?.optJSONObject(0)
+            ?.optJSONObject("message")
+            ?.optString("content")
+            .orEmpty()
+            .trim()
+        val payload = JSONObject(rawContent.removePrefix("```json").removePrefix("```").removeSuffix("```").trim())
+        val result = when (payload.optString("result").lowercase()) {
+            "correct" -> AnswerEvaluationResult.CORRECT
+            "incorrect" -> AnswerEvaluationResult.INCORRECT
+            else -> AnswerEvaluationResult.REVIEW
+        }
+        FillBlankEvaluation(
+            result = result,
+            reason = payload.optString("reason").ifBlank { "AI 未提供判定原因" },
+            confidence = payload.optDouble("confidence", 0.0).coerceIn(0.0, 1.0),
+            evaluatedByAi = true,
+        )
     }
 
     private fun generateBatch(

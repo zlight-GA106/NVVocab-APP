@@ -30,6 +30,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,6 +46,7 @@ import com.zlight106.nvvocab.data.ContrastPracticePreset
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.ContrastQuestion
 import com.zlight106.nvvocab.data.ContrastReviewPreferences
+import com.zlight106.nvvocab.data.ParaphraseSeed
 import com.zlight106.nvvocab.data.PracticeDifficulty
 import com.zlight106.nvvocab.data.PracticeRangeMode
 import com.zlight106.nvvocab.data.ProficiencyBand
@@ -51,6 +54,7 @@ import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.domain.ContrastPracticePlanner
+import com.zlight106.nvvocab.domain.ParaphrasePracticeGenerator
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.NvvDropdown
 import com.zlight106.nvvocab.ui.components.SectionCard
@@ -69,6 +73,7 @@ private data class ContrastAnswerRecord(
 fun ContrastPracticePanel(
     viewModel: MainViewModel,
     words: List<WordEntry>,
+    paraphraseSeeds: List<ParaphraseSeed>,
     tags: List<String>,
     quizBanks: List<QuizBank>,
     onStartSession: (PracticeSessionRequest) -> Unit,
@@ -86,6 +91,7 @@ fun ContrastPracticePanel(
     var optionCountText by remember { mutableStateOf(savedPreferences.optionCountText) }
     var questionCountText by remember { mutableStateOf(savedPreferences.questionCountText) }
     var timeLimitText by remember { mutableStateOf(savedPreferences.timeLimitText) }
+    var includeTimingInXml by remember { mutableStateOf(savedPreferences.includeTimingInXml) }
     var selectedQuizBankId by remember { mutableStateOf(savedPreferences.selectedQuizBankId) }
     var showWordPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
@@ -113,6 +119,7 @@ fun ContrastPracticePanel(
                 timeLimitText = timeLimitText,
                 hintEnabled = false,
                 selectedQuizBankId = selectedQuizBankId,
+                includeTimingInXml = includeTimingInXml,
             ),
         )
     }
@@ -134,13 +141,33 @@ fun ContrastPracticePanel(
             sort = sort,
         )
     }
-    val availableChoiceCount = remember(words, type) {
-        words.map { word ->
-            when (type) {
+    val scopedParaphraseSeeds = remember(paraphraseSeeds, rangeMode, selectedTag) {
+        paraphraseSeeds.asSequence()
+            .filter { seed -> rangeMode != PracticeRangeMode.CATEGORY || seed.sourceReference == selectedTag }
+            .sortedByDescending(ParaphraseSeed::updatedAt)
+            .toList()
+    }
+    val categoryOptions = remember(tags, paraphraseSeeds, type) {
+        if (type == ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
+            (tags + paraphraseSeeds.mapNotNull(ParaphraseSeed::sourceReference))
+                .filter(String::isNotBlank)
+                .distinct()
+                .sorted()
+        } else {
+            tags
+        }
+    }
+    val availableChoiceCount = remember(words, scopedParaphraseSeeds, type) {
+        if (type == ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
+            scopedParaphraseSeeds.map(ParaphraseSeed::targetText)
+        } else {
+            words.map { word ->
+                when (type) {
                 ContrastPracticeType.CHINESE_TO_ENGLISH,
                 ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH,
                 -> word.spelling.trim()
                 ContrastPracticeType.ENGLISH_TO_CHINESE -> word.translation.trim()
+                }
             }
         }.filter(String::isNotBlank).distinctBy(String::lowercase).size
     }
@@ -159,7 +186,33 @@ fun ContrastPracticePanel(
     fun generate() {
         val optionCount = optionCountText.toIntOrNull() ?: return
         val maximumQuestionCount = questionCountText.toIntOrNull() ?: return
-        if (optionCount !in 2..8 || maximumQuestionCount < 0 || scopedWords.isEmpty()) return
+        if (optionCount !in 2..8 || maximumQuestionCount < 0) return
+        if (type == ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
+            val targets = if (maximumQuestionCount == 0) {
+                scopedParaphraseSeeds
+            } else {
+                scopedParaphraseSeeds.take(maximumQuestionCount)
+            }
+            val generated = runCatching {
+                targets.map { seed ->
+                    ParaphrasePracticeGenerator.generate(seed, scopedParaphraseSeeds, optionCount)
+                }
+            }.getOrElse { return }
+            if (generated.isNotEmpty()) {
+                onStartSession(
+                    PracticeSessionRequest.Contrast(
+                        queue = generated,
+                        practiceType = type,
+                        difficulty = difficulty,
+                        timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300) ?: 30,
+                        hintEnabled = false,
+                        includeTimingInXml = includeTimingInXml,
+                    ),
+                )
+            }
+            return
+        }
+        if (scopedWords.isEmpty()) return
         val targets = ContrastPracticePlanner.applyMaximum(scopedWords, maximumQuestionCount)
         generating = true
         started = false
@@ -188,6 +241,7 @@ fun ContrastPracticePanel(
                             difficulty = difficulty,
                             timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300) ?: 30,
                             hintEnabled = false,
+                            includeTimingInXml = includeTimingInXml,
                         ),
                     )
                 }
@@ -196,6 +250,10 @@ fun ContrastPracticePanel(
     }
 
     fun startPractice() {
+        if (type == ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
+            generate()
+            return
+        }
         val bankId = selectedQuizBankId
         if (bankId == null) {
             generate()
@@ -210,7 +268,13 @@ fun ContrastPracticePanel(
                 questions.take(maximumQuestionCount)
             }
             if (prepared.isNotEmpty()) {
-                onStartSession(PracticeSessionRequest.Quiz(queue = prepared))
+                onStartSession(
+                    PracticeSessionRequest.Quiz(
+                        queue = prepared,
+                        timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300),
+                        includeTimingInXml = includeTimingInXml,
+                    ),
+                )
             }
         }
     }
@@ -224,7 +288,7 @@ fun ContrastPracticePanel(
                     value = type,
                     options = listOf(
                         ContrastPracticeType.CHINESE_TO_ENGLISH to "中文翻译英文多选一",
-                        ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH to "英文解释英文多选一",
+                        ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH to "语义压缩练习",
                         ContrastPracticeType.ENGLISH_TO_CHINESE to "英文翻译中文多选一",
                     ),
                     icon = NvvIcons.Sparkles,
@@ -281,7 +345,7 @@ fun ContrastPracticePanel(
                     PracticeRangeMode.CATEGORY -> NvvDropdown(
                         label = "词库分类",
                         value = selectedTag,
-                        options = listOf(null to "请选择分类") + tags.map { tag -> tag to tag },
+                        options = listOf(null to "请选择分类") + categoryOptions.map { tag -> tag to tag },
                         icon = NvvIcons.Tags,
                         onChange = { selectedTag = it; persist() },
                     )
@@ -326,7 +390,11 @@ fun ContrastPracticePanel(
                     },
                 )
                 Text(
-                    "当前范围 ${scopedWords.size} 词，最大题量为 0 时生成当前分类的全部词。",
+                    if (type == ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
+                        "当前范围 ${scopedParaphraseSeeds.size} 条语义种子，最大题量为 0 时生成全部种子。"
+                    } else {
+                        "当前范围 ${scopedWords.size} 词，最大题量为 0 时生成当前分类的全部词。"
+                    },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Row(
@@ -355,26 +423,54 @@ fun ContrastPracticePanel(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                NvvDropdown(
-                    label = "从题库选择练习",
-                    value = selectedQuizBankId,
-                    options = listOf(null to "根据当前词库生成") + quizBanks.map { bank ->
-                        bank.id as String? to "${bank.name.ifBlank { "未命名题库" }}（${bank.questionCount} 题）"
-                    },
-                    icon = NvvIcons.FileQuestion,
-                    onChange = {
-                        selectedQuizBankId = it
-                        started = false
-                        finished = false
-                        persist()
-                    },
-                )
+                if (type != ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
+                    NvvDropdown(
+                        label = "从题库选择练习",
+                        value = selectedQuizBankId,
+                        options = listOf(null to "根据当前词库生成") + quizBanks.map { bank ->
+                            bank.id as String? to "${bank.name.ifBlank { "未命名题库" }}（${bank.questionCount} 题）"
+                        },
+                        icon = NvvIcons.FileQuestion,
+                        onChange = {
+                            selectedQuizBankId = it
+                            started = false
+                            finished = false
+                            persist()
+                        },
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            includeTimingInXml = !includeTimingInXml
+                            persist()
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = !includeTimingInXml, onCheckedChange = null)
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text("不保存用时到本地 XML")
+                        Text(
+                            "关闭遥测 XML 与错题 XML 中的每题有效用时字段。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 val optionCount = optionCountText.toIntOrNull() ?: 0
                 val questionCount = questionCountText.toIntOrNull() ?: 0
                 val timeLimit = timeLimitText.toIntOrNull() ?: 0
                 val selectedQuizBank = quizBanks.firstOrNull { it.id == selectedQuizBankId }
-                val configurationValid = if (selectedQuizBankId != null) {
-                    selectedQuizBank != null && selectedQuizBank.questionCount > 0 && questionCount >= 0
+                val configurationValid = if (type == ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
+                    optionCount in 2..8 &&
+                        questionCount >= 0 &&
+                        timeLimit in 5..300 &&
+                        scopedParaphraseSeeds.isNotEmpty() &&
+                        availableChoiceCount >= optionCount
+                } else if (selectedQuizBankId != null) {
+                    selectedQuizBank != null && selectedQuizBank.questionCount > 0 &&
+                        questionCount >= 0 && timeLimit in 5..300
                 } else {
                     optionCount in 2..8 &&
                         questionCount >= 0 &&
@@ -398,7 +494,8 @@ fun ContrastPracticePanel(
                     Text(
                         when {
                             generating -> "正在生成"
-                            selectedQuizBankId != null -> "开始题库练习"
+                            type != ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH &&
+                                selectedQuizBankId != null -> "开始题库练习"
                             else -> "生成并开始"
                         },
                         Modifier.padding(start = 8.dp),
@@ -647,6 +744,7 @@ private fun ContrastQuestionCard(
     onAnswered: (Int?) -> Unit,
     onNext: () -> Unit,
 ) {
+    val lifecycleOwner = LocalLifecycleOwner.current
     var selectedIndex by remember(question.id) { mutableStateOf<Int?>(null) }
     var checked by remember(question.id) { mutableStateOf(false) }
     var remainingSeconds by remember(question.id) { mutableIntStateOf(timeLimitSeconds) }
@@ -654,7 +752,9 @@ private fun ContrastQuestionCard(
     LaunchedEffect(question.id, checked) {
         while (!checked && remainingSeconds > 0) {
             delay(1_000)
-            remainingSeconds -= 1
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                remainingSeconds -= 1
+            }
         }
         if (!checked && remainingSeconds == 0) {
             checked = true

@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.zlight106.nvvocab.data.QuizQuestion
+import com.zlight106.nvvocab.data.QuizQuestionType
 import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.data.WrongQuestionSort
 import com.zlight106.nvvocab.ui.components.NvvDropdown
@@ -110,8 +111,21 @@ fun QuizPreviewDialog(
                                     )
                                 }
                                 Text(question.text, fontWeight = FontWeight.SemiBold)
-                                question.options.forEach { option ->
-                                    Text("${option.id}. ${option.text}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (question.type == QuizQuestionType.FILL_BLANK) {
+                                    Text(
+                                        "参考答案：${question.referenceAnswer.orEmpty()}",
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    question.category?.let { category ->
+                                        Text("分类：$category", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    question.explanation?.let { explanation ->
+                                        Text("解析：$explanation", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                } else {
+                                    question.options.forEach { option ->
+                                        Text("${option.id}. ${option.text}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                                 LinearProgressIndicator(
                                     progress = { (record?.proficiencyPercent ?: 0) / 100f },

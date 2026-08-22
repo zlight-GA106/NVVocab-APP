@@ -46,6 +46,19 @@ data class QuizOption(
     val text: String,
 )
 
+data class ParaphraseSeed(
+    val id: String,
+    val userId: String?,
+    val sourceText: String,
+    val targetText: String,
+    val contextText: String?,
+    val sourceReference: String?,
+    val notes: String?,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val dirty: Boolean,
+)
+
 fun formatOptionAnswers(
     options: List<QuizOption>,
     answerIds: Set<String>,
@@ -66,6 +79,35 @@ data class QuizQuestion(
     val text: String,
     val options: List<QuizOption>,
     val answers: Set<String>,
+    val type: QuizQuestionType = QuizQuestionType.MULTIPLE_CHOICE,
+    val referenceAnswer: String? = null,
+    val acceptedAnswers: Set<String> = emptySet(),
+    val explanation: String? = null,
+    val category: String? = null,
+    val sourceReference: String? = null,
+)
+
+enum class QuizQuestionType {
+    MULTIPLE_CHOICE,
+    FILL_BLANK,
+}
+
+enum class QuizQuestionTypeFilter {
+    MULTIPLE_CHOICE,
+    FILL_BLANK,
+}
+
+enum class AnswerEvaluationResult {
+    CORRECT,
+    INCORRECT,
+    REVIEW,
+}
+
+data class FillBlankEvaluation(
+    val result: AnswerEvaluationResult,
+    val reason: String,
+    val confidence: Double,
+    val evaluatedByAi: Boolean,
 )
 
 enum class QuizSource {
@@ -97,6 +139,12 @@ data class ParsedQuizQuestion(
     val text: String,
     val options: List<QuizOption>,
     val answers: Set<String>,
+    val type: QuizQuestionType = QuizQuestionType.MULTIPLE_CHOICE,
+    val referenceAnswer: String? = null,
+    val acceptedAnswers: Set<String> = emptySet(),
+    val explanation: String? = null,
+    val category: String? = null,
+    val sourceReference: String? = null,
 )
 
 data class QuizAttempt(
@@ -107,6 +155,73 @@ data class QuizAttempt(
     val selectedAnswers: Set<String>,
     val correct: Boolean,
     val scoreGained: Int,
+    val userAnswer: String? = null,
+    val hintUsed: Boolean = false,
+    val evaluationResult: AnswerEvaluationResult = if (correct) {
+        AnswerEvaluationResult.CORRECT
+    } else {
+        AnswerEvaluationResult.INCORRECT
+    },
+)
+
+enum class PracticeAttemptMode {
+    WORD_DICTATION,
+    WORD_SPELLING,
+    QUIZ_CHOICE,
+    QUIZ_FILL_BLANK,
+    CHINESE_TO_ENGLISH,
+    ENGLISH_TO_CHINESE,
+    ENGLISH_DEFINITION_TO_ENGLISH,
+}
+
+data class PracticeAttempt(
+    val id: String,
+    val userId: String?,
+    val sessionId: String,
+    val itemId: String,
+    val sourceId: String? = null,
+    val mode: PracticeAttemptMode,
+    val sequenceIndex: Int,
+    val question: String,
+    val options: List<QuizOption>,
+    val firstAnswer: String,
+    val finalAnswer: String,
+    val referenceAnswer: String,
+    val acceptedAnswers: Set<String>,
+    val explanation: String?,
+    val correct: Boolean,
+    val firstAnswerCorrect: Boolean,
+    val activeTimeMs: Long,
+    val hintUsed: Boolean,
+    val timestamp: Long,
+    val dirty: Boolean,
+)
+
+data class PracticeSessionRuntime(
+    val sessionId: String,
+    val currentIndex: Int = 0,
+    val attempts: List<PracticeAttempt> = emptyList(),
+    val finished: Boolean = false,
+)
+
+enum class ItemMaturity {
+    NEW,
+    LEARNING,
+    FAMILIAR,
+    MATURE,
+    MASTERED,
+}
+
+data class ItemMaturitySnapshot(
+    val itemId: String,
+    val mode: PracticeAttemptMode,
+    val maturity: ItemMaturity,
+    val validAttemptCount: Int,
+    val sessionCount: Int,
+    val recentAccuracy: Double,
+    val medianActiveTimeMs: Long,
+    val baselineActiveTimeMs: Long,
+    val reviewPriority: Double,
 )
 
 data class WordReviewResult(
@@ -117,7 +232,16 @@ data class WordReviewResult(
 data class QuizSessionAnswer(
     val question: QuizQuestion,
     val selectedAnswers: Set<String>,
-)
+    val userAnswer: String? = null,
+    val hintUsed: Boolean = false,
+    val evaluation: FillBlankEvaluation? = null,
+) {
+    val correct: Boolean
+        get() = when (question.type) {
+            QuizQuestionType.MULTIPLE_CHOICE -> selectedAnswers == question.answers
+            QuizQuestionType.FILL_BLANK -> evaluation?.result == AnswerEvaluationResult.CORRECT
+        }
+}
 
 enum class WrongQuestionSource {
     QUIZ,
@@ -141,12 +265,25 @@ data class WrongQuestionEntry(
     val lastWrongAt: Long,
     val lastReviewedAt: Long?,
     val dirty: Boolean,
+    val questionType: QuizQuestionType = QuizQuestionType.MULTIPLE_CHOICE,
+    val referenceAnswer: String? = null,
+    val acceptedAnswers: Set<String> = emptySet(),
+    val explanation: String? = null,
+    val category: String? = null,
+    val sourceReference: String? = null,
+    val lastUserAnswer: String? = null,
+    val hintUsedCount: Int = 0,
 ) {
     val attemptCount: Int
         get() = wrongCount + correctCount
 
     val proficiencyPercent: Int
-        get() = if (attemptCount == 0) 0 else (correctCount * 100f / attemptCount).toInt().coerceIn(0, 100)
+        get() {
+            if (attemptCount == 0) return 0
+            val assistedCorrect = hintUsedCount.coerceAtMost(correctCount)
+            val weightedCorrect = correctCount - assistedCorrect * 0.5f
+            return (weightedCorrect * 100f / attemptCount).toInt().coerceIn(0, 100)
+        }
 }
 
 data class WrongQuestionResult(
@@ -158,6 +295,14 @@ data class WrongQuestionResult(
     val options: List<QuizOption>,
     val correctAnswers: Set<String>,
     val correct: Boolean,
+    val questionType: QuizQuestionType = QuizQuestionType.MULTIPLE_CHOICE,
+    val referenceAnswer: String? = null,
+    val acceptedAnswers: Set<String> = emptySet(),
+    val explanation: String? = null,
+    val category: String? = null,
+    val sourceReference: String? = null,
+    val userAnswer: String? = null,
+    val hintUsed: Boolean = false,
 )
 
 data class ContrastQuestionResult(
@@ -199,6 +344,8 @@ data class AiSettings(
     val apiKey: String = "",
     val model: String = "deepseek-v4-flash",
     val systemPrompt: String = DEFAULT_AI_PROMPT,
+    val mixedReviewPrompt: String = DEFAULT_MIXED_REVIEW_PROMPT,
+    val fillBlankEvaluationPrompt: String = DEFAULT_FILL_BLANK_EVALUATION_PROMPT,
     val analysisPrompt: String = DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT,
 )
 
@@ -218,6 +365,14 @@ const val DEFAULT_AI_PROMPT = """你是单词速记应用中的英语对照练�
 </quiz>
 
 每个目标词必须按输入顺序生成且只生成一道 question。每题只能有一个正确答案。option 的 id 必须从 A 开始连续排列，answer 必须填写正确选项的 id。选项数量必须符合用户指令并且不得重复。score 固定为 10。不要生成 password 字段。文本中的小于号、大于号、与号、引号和撇号必须按 XML 规则转义。"""
+
+const val DEFAULT_MIXED_REVIEW_PROMPT = """你是单词速记应用中的混合复习出题器。系统会按中翻英或英翻中模式分批提供目标词和候选词。你只能使用输入数据生成单选题，不得虚构、替换或遗漏目标词。
+
+每个目标词必须按输入顺序生成且只生成一道题。题干和选项必须严格符合当前批次指定的练习模式。每题只能有一个正确答案，干扰项不得与正确答案重复或形成歧义。响应必须是可直接解析的 XML 原文，不得输出 Markdown、JSON、前言或解释。"""
+
+const val DEFAULT_FILL_BLANK_EVALUATION_PROMPT = """你是考试填空题的等价答案复核器。只能判断用户答案是否与给定参考答案在语义、命令效果或标准写法上等价，禁止自行创造新答案。
+
+对命令、参数、路径、变量和符号采用严格判定。参考答案与可接受答案优先；无法确定时必须返回 review。只返回 JSON，结构为 {"result":"correct|incorrect|review","reason":"简短原因","confidence":0.0}，不得输出其他内容。"""
 
 const val LEGACY_DEFAULT_WRONG_QUESTION_ANALYSIS_PROMPT = """请分析下面这道英语学习错题。输出中文纯文本，依次说明正确答案、核心知识点、常见误区和一条便于记忆的建议。保持简洁，不要使用 Markdown 表格。"""
 
@@ -398,6 +553,7 @@ enum class ReviewCategory {
     WORDS,
     QUESTIONS,
     CONTRAST,
+    MIXED,
     WRONG_BOOK,
 }
 
@@ -430,6 +586,11 @@ data class QuizReviewPreferences(
     val randomCount: String = "20",
     val randomizeOptions: Boolean = false,
     val unifiedSettlement: Boolean = false,
+    val questionTypeFilter: QuizQuestionTypeFilter = QuizQuestionTypeFilter.MULTIPLE_CHOICE,
+    val ignoreFillBlankCase: Boolean = true,
+    val timeLimitEnabled: Boolean = false,
+    val timeLimitText: String = "30",
+    val includeTimingInXml: Boolean = true,
 )
 
 data class ContrastReviewPreferences(
@@ -445,7 +606,46 @@ data class ContrastReviewPreferences(
     val timeLimitText: String = "30",
     val hintEnabled: Boolean = false,
     val selectedQuizBankId: String? = null,
+    val includeTimingInXml: Boolean = true,
 )
+
+enum class MixedReviewMode {
+    DICTATION,
+    CHINESE_TO_ENGLISH,
+    ENGLISH_TO_CHINESE,
+    ENGLISH_DEFINITION_TO_ENGLISH,
+}
+
+fun defaultMixedModePercentages(): Map<MixedReviewMode, Int> = mapOf(
+    MixedReviewMode.DICTATION to 25,
+    MixedReviewMode.CHINESE_TO_ENGLISH to 25,
+    MixedReviewMode.ENGLISH_TO_CHINESE to 25,
+    MixedReviewMode.ENGLISH_DEFINITION_TO_ENGLISH to 25,
+)
+
+data class MixedReviewPreferences(
+    val selectedTags: Set<String> = emptySet(),
+    val questionCountText: String = "50",
+    val enabledModes: Set<MixedReviewMode> = MixedReviewMode.entries.toSet(),
+    val modePercentages: Map<MixedReviewMode, Int> = defaultMixedModePercentages(),
+    val difficulty: PracticeDifficulty = PracticeDifficulty.EASY,
+    val optionCountText: String = "4",
+    val timeLimitText: String = "30",
+    val includeTimingInXml: Boolean = true,
+)
+
+data class MixedReviewItem(
+    val word: WordEntry? = null,
+    val paraphraseSeed: ParaphraseSeed? = null,
+    val mode: MixedReviewMode,
+    val contrastQuestion: ContrastQuestion? = null,
+) {
+    val itemId: String
+        get() = paraphraseSeed?.id ?: requireNotNull(word).id
+
+    val sourceId: String?
+        get() = paraphraseSeed?.sourceReference ?: word?.bookTag
+}
 
 enum class SyncMode {
     ON_LOCAL_CHANGE,
@@ -459,12 +659,17 @@ data class SyncSettings(
 )
 
 data class SyncReport(
+    val downloadedParaphraseSeeds: Int,
+    val downloadedAttempts: Int,
     val downloadedLogs: Int,
     val downloadedTitleLists: Int,
     val downloadedWrongQuestions: Int,
     val downloadedWords: Int,
+    val uploadedAttempts: Int,
     val uploadedLogs: Int,
     val uploadedTitleLists: Int,
     val uploadedWrongQuestions: Int,
     val uploadedWords: Int,
+    val uploadedParaphraseSeeds: Int,
+    val pendingAttempts: Int,
 )

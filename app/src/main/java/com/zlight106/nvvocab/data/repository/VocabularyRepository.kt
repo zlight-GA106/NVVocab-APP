@@ -1,16 +1,20 @@
 package com.zlight106.nvvocab.data.repository
 
 import com.zlight106.nvvocab.data.AppPreferences
+import com.zlight106.nvvocab.data.AnswerEvaluationResult
 import com.zlight106.nvvocab.data.AuthSession
 import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.ContrastQuestion
 import com.zlight106.nvvocab.data.DailyPracticeProgress
 import com.zlight106.nvvocab.data.DictationMode
+import com.zlight106.nvvocab.data.FillBlankEvaluation
+import com.zlight106.nvvocab.data.ParaphraseSeed
 import com.zlight106.nvvocab.data.ParsedWord
 import com.zlight106.nvvocab.data.ParsedQuizBank
 import com.zlight106.nvvocab.data.ParsedQuizQuestion
 import com.zlight106.nvvocab.data.PracticeDifficulty
+import com.zlight106.nvvocab.data.PracticeAttempt
 import com.zlight106.nvvocab.data.QuizAttempt
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.QuizOption
@@ -29,9 +33,12 @@ import com.zlight106.nvvocab.data.network.AiPracticeGateway
 import com.zlight106.nvvocab.data.network.AuthOutcome
 import com.zlight106.nvvocab.data.network.SupabaseGateway
 import com.zlight106.nvvocab.domain.ProficiencyCalculator
+import com.zlight106.nvvocab.domain.FillBlankEvaluator
 import com.zlight106.nvvocab.domain.QuizXmlParser
 import com.zlight106.nvvocab.domain.QuizXmlWriter
 import com.zlight106.nvvocab.domain.ReviewCadence
+import com.zlight106.nvvocab.domain.WrongAttemptXmlWriter
+import com.zlight106.nvvocab.domain.SessionTelemetryXmlWriter
 import java.io.OutputStream
 import java.io.InputStream
 import java.time.Instant
@@ -43,6 +50,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class VocabularyRepository(
@@ -59,7 +68,10 @@ class VocabularyRepository(
     private val mutableContrastPracticeSessions = MutableStateFlow<List<ContrastPracticeSession>>(emptyList())
     private val mutableDailyPracticeProgress = MutableStateFlow(DailyPracticeProgress())
     private val mutableWrongQuestions = MutableStateFlow<List<WrongQuestionEntry>>(emptyList())
+    private val mutablePracticeAttempts = MutableStateFlow<List<PracticeAttempt>>(emptyList())
+    private val mutableParaphraseSeeds = MutableStateFlow<List<ParaphraseSeed>>(emptyList())
     private val mutableLocalDataLoaded = MutableStateFlow(false)
+    private val practiceAttemptWriteMutex = Mutex()
 
     val words: StateFlow<List<WordEntry>> = mutableWords.asStateFlow()
     val bookTags: StateFlow<List<String>> = mutableBookTags.asStateFlow()
@@ -69,6 +81,8 @@ class VocabularyRepository(
         mutableContrastPracticeSessions.asStateFlow()
     val dailyPracticeProgress: StateFlow<DailyPracticeProgress> = mutableDailyPracticeProgress.asStateFlow()
     val wrongQuestions: StateFlow<List<WrongQuestionEntry>> = mutableWrongQuestions.asStateFlow()
+    val practiceAttempts: StateFlow<List<PracticeAttempt>> = mutablePracticeAttempts.asStateFlow()
+    val paraphraseSeeds: StateFlow<List<ParaphraseSeed>> = mutableParaphraseSeeds.asStateFlow()
     val localDataLoaded: StateFlow<Boolean> = mutableLocalDataLoaded.asStateFlow()
 
     suspend fun refreshLocal() = withContext(Dispatchers.IO) {
@@ -79,7 +93,94 @@ class VocabularyRepository(
         mutableContrastPracticeSessions.value = database.getRecentContrastPracticeSessions()
         mutableDailyPracticeProgress.value = database.getDailyPracticeProgress(startOfTodayMillis())
         mutableWrongQuestions.value = database.getWrongQuestions()
+        mutablePracticeAttempts.value = database.getPracticeAttempts()
+        mutableParaphraseSeeds.value = database.getParaphraseSeeds()
         mutableLocalDataLoaded.value = true
+    }
+
+    suspend fun recordPracticeAttempts(attempts: List<PracticeAttempt>) = withContext(Dispatchers.IO) {
+        if (attempts.isEmpty()) return@withContext
+        practiceAttemptWriteMutex.withLock {
+            val userId = preferences.readSession()?.userId
+            database.insertPracticeAttempts(attempts.map { it.copy(userId = it.userId ?: userId, dirty = true) })
+            mutablePracticeAttempts.value = database.getPracticeAttempts()
+            onLocalDataChanged()
+        }
+    }
+
+    suspend fun exportWrongAttemptSession(
+        sessionId: String,
+        attempts: List<PracticeAttempt>,
+        output: OutputStream,
+        includeTiming: Boolean = true,
+    ) = withContext(Dispatchers.IO) {
+        WrongAttemptXmlWriter.write(sessionId, attempts, output, includeTiming)
+    }
+
+    suspend fun exportSessionTelemetry(
+        sessionId: String,
+        attempts: List<PracticeAttempt>,
+        output: OutputStream,
+        includeTiming: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        SessionTelemetryXmlWriter.write(sessionId, attempts, output, includeTiming)
+    }
+
+    suspend fun saveParaphraseSeed(
+        id: String?,
+        sourceText: String,
+        targetText: String,
+        contextText: String?,
+        sourceReference: String?,
+        notes: String?,
+    ): ParaphraseSeed = withContext(Dispatchers.IO) {
+        require(sourceText.isNotBlank()) { "原表达不能为空" }
+        require(targetText.isNotBlank()) { "等效表达不能为空" }
+        val now = System.currentTimeMillis()
+        val existing = id?.let { candidate -> mutableParaphraseSeeds.value.firstOrNull { it.id == candidate } }
+        val entry = ParaphraseSeed(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            userId = existing?.userId ?: preferences.readSession()?.userId,
+            sourceText = sourceText.trim(),
+            targetText = targetText.trim(),
+            contextText = contextText?.trim()?.takeIf(String::isNotBlank),
+            sourceReference = sourceReference?.trim()?.takeIf(String::isNotBlank),
+            notes = notes?.trim()?.takeIf(String::isNotBlank),
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+            dirty = true,
+        )
+        database.upsertParaphraseSeeds(listOf(entry))
+        mutableParaphraseSeeds.value = database.getParaphraseSeeds()
+        onLocalDataChanged()
+        entry
+    }
+
+    suspend fun importParaphraseSeeds(entries: List<ParaphraseSeed>): Int = withContext(Dispatchers.IO) {
+        if (entries.isEmpty()) return@withContext 0
+        val now = System.currentTimeMillis()
+        val userId = preferences.readSession()?.userId
+        val normalized = entries.mapIndexed { index, entry ->
+            entry.copy(
+                id = entry.id.ifBlank { UUID.randomUUID().toString() },
+                userId = entry.userId ?: userId,
+                sourceText = entry.sourceText.trim(),
+                targetText = entry.targetText.trim(),
+                createdAt = entry.createdAt.takeIf { it > 0L } ?: now + index,
+                updatedAt = now + index,
+                dirty = true,
+            )
+        }.filter { it.sourceText.isNotBlank() && it.targetText.isNotBlank() }
+        database.upsertParaphraseSeeds(normalized)
+        mutableParaphraseSeeds.value = database.getParaphraseSeeds()
+        onLocalDataChanged()
+        normalized.size
+    }
+
+    suspend fun deleteParaphraseSeed(id: String) = withContext(Dispatchers.IO) {
+        database.deleteParaphraseSeed(id, preferences.readSession()?.userId, System.currentTimeMillis())
+        mutableParaphraseSeeds.value = database.getParaphraseSeeds()
+        onLocalDataChanged()
     }
 
     suspend fun importWords(parsedWords: List<ParsedWord>, bookTag: String): Int = withContext(Dispatchers.IO) {
@@ -185,6 +286,24 @@ class VocabularyRepository(
         database.getQuizQuestions(bankId)
     }
 
+    suspend fun evaluateFillBlankAnswer(
+        question: QuizQuestion,
+        userAnswer: String,
+        ignoreCase: Boolean,
+    ): FillBlankEvaluation = withContext(Dispatchers.IO) {
+        val local = FillBlankEvaluator.evaluateLocally(question, userAnswer, ignoreCase)
+        if (local.result != AnswerEvaluationResult.REVIEW) return@withContext local
+        val settings = preferences.readAiSettings()
+        if (settings.apiKey.isBlank()) return@withContext local.copy(
+            reason = "本地未匹配且尚未配置 AI，已标记为待复核",
+        )
+        runCatching {
+            aiPracticeGateway.evaluateFillBlankAnswer(settings, question, userAnswer)
+        }.getOrElse {
+            local.copy(reason = "AI 复核不可用，已标记为待复核")
+        }
+    }
+
     suspend fun exportQuizBank(bankId: String, output: OutputStream) = withContext(Dispatchers.IO) {
         QuizXmlWriter.write(database.getQuizQuestions(bankId), output)
     }
@@ -200,7 +319,7 @@ class VocabularyRepository(
             val answeredAt = System.currentTimeMillis()
             val bankNames = database.getQuizBanks().associate { it.id to it.name }
             answers.forEachIndexed { index, answer ->
-                val correct = answer.selectedAnswers == answer.question.answers
+                val correct = answer.correct
                 database.insertQuizAttempt(
                     QuizAttempt(
                         id = UUID.randomUUID().toString(),
@@ -210,11 +329,18 @@ class VocabularyRepository(
                         selectedAnswers = answer.selectedAnswers,
                         correct = correct,
                         scoreGained = if (correct) answer.question.score else 0,
+                        userAnswer = answer.userAnswer,
+                        hintUsed = answer.hintUsed,
+                        evaluationResult = answer.evaluation?.result ?: if (correct) {
+                            AnswerEvaluationResult.CORRECT
+                        } else {
+                            AnswerEvaluationResult.INCORRECT
+                        },
                     ),
                 )
             }
             database.recordWrongQuestionResults(
-                answers.map { answer ->
+                answers.filterNot { it.evaluation?.result == AnswerEvaluationResult.REVIEW }.map { answer ->
                     WrongQuestionResult(
                         source = WrongQuestionSource.QUIZ,
                         bankId = answer.question.bankId,
@@ -223,7 +349,15 @@ class VocabularyRepository(
                         questionText = answer.question.text,
                         options = answer.question.options,
                         correctAnswers = answer.question.answers,
-                        correct = answer.selectedAnswers == answer.question.answers,
+                        correct = answer.correct,
+                        questionType = answer.question.type,
+                        referenceAnswer = answer.question.referenceAnswer,
+                        acceptedAnswers = answer.question.acceptedAnswers,
+                        explanation = answer.question.explanation,
+                        category = answer.question.category,
+                        sourceReference = answer.question.sourceReference,
+                        userAnswer = answer.userAnswer,
+                        hintUsed = answer.hintUsed,
                     )
                 },
                 preferences.readSession()?.userId,
@@ -237,7 +371,7 @@ class VocabularyRepository(
         withContext(Dispatchers.IO) {
             val existingByKey = database.getWrongQuestions().associateBy(WrongQuestionEntry::questionKey)
             database.recordWrongQuestionResults(
-                answers.map { answer ->
+                answers.filterNot { it.evaluation?.result == AnswerEvaluationResult.REVIEW }.map { answer ->
                     val existing = existingByKey[answer.question.id]
                     WrongQuestionResult(
                         source = existing?.source ?: WrongQuestionSource.QUIZ,
@@ -247,7 +381,15 @@ class VocabularyRepository(
                         questionText = answer.question.text,
                         options = answer.question.options,
                         correctAnswers = answer.question.answers,
-                        correct = answer.selectedAnswers == answer.question.answers,
+                        correct = answer.correct,
+                        questionType = answer.question.type,
+                        referenceAnswer = answer.question.referenceAnswer,
+                        acceptedAnswers = answer.question.acceptedAnswers,
+                        explanation = answer.question.explanation,
+                        category = answer.question.category,
+                        sourceReference = answer.question.sourceReference,
+                        userAnswer = answer.userAnswer,
+                        hintUsed = answer.hintUsed,
                     )
                 },
                 preferences.readSession()?.userId,
@@ -262,7 +404,7 @@ class VocabularyRepository(
     ) = withContext(Dispatchers.IO) {
         val bankName = when (practiceType) {
             ContrastPracticeType.CHINESE_TO_ENGLISH -> "对照练习：中文翻译英文"
-            ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH -> "对照练习：英文释义选词"
+            ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH -> "对照练习：语义压缩"
             ContrastPracticeType.ENGLISH_TO_CHINESE -> "对照练习：英文翻译中文"
         }
         database.recordWrongQuestionResults(
@@ -318,10 +460,16 @@ class VocabularyRepository(
         type: ContrastPracticeType,
         optionCount: Int,
         difficulty: PracticeDifficulty,
+        useMixedReviewPrompt: Boolean = false,
         onProgress: (Float) -> Unit,
     ): List<ContrastQuestion> = withContext(Dispatchers.IO) {
+        val storedSettings = preferences.readAiSettings()
         val generated = aiPracticeGateway.generateQuestions(
-            settings = preferences.readAiSettings(),
+            settings = if (useMixedReviewPrompt) {
+                storedSettings.copy(systemPrompt = storedSettings.mixedReviewPrompt)
+            } else {
+                storedSettings
+            },
             targets = targets,
             distractorPool = distractorPool,
             type = type,
@@ -406,32 +554,64 @@ class VocabularyRepository(
         database.upsertRemoteTitleLists(remoteTitleLists)
         val remoteWrongQuestions = gateway.fetchWrongQuestions(config, session)
         database.upsertRemoteWrongQuestions(remoteWrongQuestions)
+        val remotePracticeAttempts = runCatching {
+            gateway.fetchPracticeAttempts(config, session)
+        }.getOrDefault(emptyList())
+        database.upsertRemotePracticeAttempts(remotePracticeAttempts)
+        val remoteParaphraseSeeds = runCatching {
+            gateway.fetchParaphraseSeeds(config, session)
+        }.getOrDefault(emptyList())
+        database.upsertRemoteParaphraseSeeds(remoteParaphraseSeeds)
 
         val deletedTitleListIds = database.getDeletedTitleListIds()
+        val deletedParaphraseSeedIds = database.getDeletedParaphraseSeedIds()
         val dirtyWords = database.getDirtyWords()
         val dirtyLogs = database.getDirtyReviewLogs()
         val dirtyTitleLists = database.getDirtyTitleLists()
         val dirtyWrongQuestions = database.getDirtyWrongQuestions()
+        val dirtyPracticeAttempts = database.getDirtyPracticeAttempts()
+        val dirtyParaphraseSeeds = database.getDirtyParaphraseSeeds()
         gateway.deleteTitleLists(config, session, deletedTitleListIds)
         database.clearDeletedTitleLists(deletedTitleListIds)
+        val paraphraseDeletesUploaded = runCatching {
+            gateway.deleteParaphraseSeeds(config, session, deletedParaphraseSeedIds)
+        }.isSuccess
+        if (paraphraseDeletesUploaded) database.clearDeletedParaphraseSeeds(deletedParaphraseSeedIds)
         gateway.upsertWords(config, session, dirtyWords)
         gateway.upsertReviewLogs(config, session, dirtyLogs)
         gateway.upsertTitleLists(config, session, dirtyTitleLists)
         gateway.upsertWrongQuestions(config, session, dirtyWrongQuestions)
+        val attemptsUploaded = runCatching {
+            gateway.upsertPracticeAttempts(config, session, dirtyPracticeAttempts)
+        }.isSuccess
+        val paraphraseSeedsUploaded = runCatching {
+            gateway.upsertParaphraseSeeds(config, session, dirtyParaphraseSeeds)
+        }.isSuccess
         database.markWordsClean(dirtyWords.map(WordEntry::id))
         database.markReviewLogsClean(dirtyLogs.map { it.id })
         database.markTitleListsClean(dirtyTitleLists.map { it.id })
         database.markWrongQuestionsClean(dirtyWrongQuestions.map { it.id })
+        if (attemptsUploaded) {
+            database.markPracticeAttemptsClean(dirtyPracticeAttempts.map(PracticeAttempt::id))
+        }
+        if (paraphraseSeedsUploaded) {
+            database.markParaphraseSeedsClean(dirtyParaphraseSeeds.map(ParaphraseSeed::id))
+        }
         refreshLocal()
         SyncReport(
+            downloadedParaphraseSeeds = remoteParaphraseSeeds.size,
+            downloadedAttempts = remotePracticeAttempts.size,
             downloadedLogs = remoteLogs.size,
             downloadedTitleLists = remoteTitleLists.size,
             downloadedWrongQuestions = remoteWrongQuestions.size,
             downloadedWords = remoteWords.size,
+            uploadedAttempts = if (attemptsUploaded) dirtyPracticeAttempts.size else 0,
             uploadedLogs = dirtyLogs.size,
             uploadedTitleLists = dirtyTitleLists.size,
             uploadedWrongQuestions = dirtyWrongQuestions.size,
             uploadedWords = dirtyWords.size,
+            uploadedParaphraseSeeds = if (paraphraseSeedsUploaded) dirtyParaphraseSeeds.size else 0,
+            pendingAttempts = if (attemptsUploaded) 0 else dirtyPracticeAttempts.size,
         )
     }
 

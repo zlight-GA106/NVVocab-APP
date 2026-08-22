@@ -50,7 +50,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.DailyMemoAction
 import com.zlight106.nvvocab.data.DailyMemoItem
 import com.zlight106.nvvocab.data.DailyMemoSettings
@@ -59,6 +58,8 @@ import com.zlight106.nvvocab.data.DailyPracticeProgress
 import com.zlight106.nvvocab.data.DailyProgressReference
 import com.zlight106.nvvocab.data.DailyProgressSettings
 import com.zlight106.nvvocab.data.QuizBank
+import com.zlight106.nvvocab.data.PracticeAttempt
+import com.zlight106.nvvocab.data.PracticeAttemptMode
 import com.zlight106.nvvocab.data.StudyTimeProgress
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.ui.AppUiState
@@ -66,6 +67,8 @@ import com.zlight106.nvvocab.ui.components.DailyMemoEditor
 import com.zlight106.nvvocab.ui.components.SectionCard
 import com.zlight106.nvvocab.ui.icons.NvvIcons
 import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneId
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import androidx.compose.foundation.text.KeyboardOptions
@@ -76,10 +79,9 @@ private enum class HeatmapRange { MONTH, WEEK }
 fun DashboardScreen(
     state: AppUiState,
     words: List<WordEntry>,
-    contrastSessions: List<ContrastPracticeSession>,
     quizBanks: List<QuizBank>,
-    dailyProgress: DailyPracticeProgress,
     studyTimeProgress: StudyTimeProgress,
+    practiceAttempts: List<PracticeAttempt>,
     onSaveProgressSettings: (DailyProgressReference, Int) -> Unit,
     onSaveStudyTimeGoal: (Int) -> Unit,
     onSaveDailyMemoSettings: (DailyMemoSettings) -> Unit,
@@ -90,9 +92,50 @@ fun DashboardScreen(
     var showStudyTimeDialog by remember { mutableStateOf(false) }
     val haptic = LocalHapticFeedback.current
     val today = LocalDate.now()
+    val zone = ZoneId.systemDefault()
+    val attemptDailyMillis = remember(practiceAttempts, zone) {
+        practiceAttempts.groupBy { attempt ->
+            Instant.ofEpochMilli(attempt.timestamp).atZone(zone).toLocalDate()
+        }.mapValues { (_, attempts) -> attempts.sumOf(PracticeAttempt::activeTimeMs) }
+    }
+    val attemptStudyTimeProgress = remember(attemptDailyMillis, studyTimeProgress.goalMinutes, today) {
+        StudyTimeProgress(
+            elapsedMillis = attemptDailyMillis[today] ?: 0L,
+            goalMinutes = studyTimeProgress.goalMinutes,
+            dailyMillis = attemptDailyMillis,
+        )
+    }
+    val todayAttempts = remember(practiceAttempts, today, zone) {
+        practiceAttempts.filter { attempt ->
+            Instant.ofEpochMilli(attempt.timestamp).atZone(zone).toLocalDate() == today
+        }
+    }
+    val attemptDailyProgress = remember(todayAttempts) {
+        DailyPracticeProgress(
+            dictationCompleted = todayAttempts.count {
+                it.mode == PracticeAttemptMode.WORD_DICTATION || it.mode == PracticeAttemptMode.WORD_SPELLING
+            },
+            contrastCompleted = todayAttempts.count {
+                it.mode == PracticeAttemptMode.CHINESE_TO_ENGLISH ||
+                    it.mode == PracticeAttemptMode.ENGLISH_TO_CHINESE ||
+                    it.mode == PracticeAttemptMode.ENGLISH_DEFINITION_TO_ENGLISH
+            },
+            customQuizCompleted = todayAttempts.count {
+                it.mode == PracticeAttemptMode.QUIZ_CHOICE || it.mode == PracticeAttemptMode.QUIZ_FILL_BLANK
+            },
+            customQuizCompletedByBank = todayAttempts.asSequence()
+                .filter { attempt ->
+                    attempt.mode == PracticeAttemptMode.QUIZ_CHOICE ||
+                        attempt.mode == PracticeAttemptMode.QUIZ_FILL_BLANK
+                }
+                .mapNotNull { attempt -> attempt.sourceId?.takeIf(String::isNotBlank) }
+                .groupingBy { bankId -> bankId }
+                .eachCount(),
+        )
+    }
     val progressSettings = state.dailyProgressSettings
     val progressReference = progressSettings.reference
-    val todayCompleted = dailyProgress.completedFor(progressReference)
+    val todayCompleted = attemptDailyProgress.completedFor(progressReference)
     val target = progressSettings.targetFor().coerceAtLeast(1)
     val progress = if (target > 0) {
         (todayCompleted.toFloat() / target).coerceIn(0f, 1f)
@@ -157,7 +200,7 @@ fun DashboardScreen(
             }
         }
         StudyTimeCard(
-            progress = studyTimeProgress,
+            progress = attemptStudyTimeProgress,
             onClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 showStudyTimeDialog = true
@@ -165,7 +208,7 @@ fun DashboardScreen(
         )
         DailyMemoCard(
             settings = state.dailyMemoSettings,
-            progress = dailyProgress,
+            progress = attemptDailyProgress,
             wordCount = words.size,
             quizBanks = quizBanks,
             onClick = {
@@ -173,7 +216,7 @@ fun DashboardScreen(
                 showMemoDialog = true
             },
         )
-        ContrastPracticeSummary(contrastSessions)
+        ContrastPracticeSummary(practiceAttempts)
         SectionCard {
             Column(
                 modifier = Modifier.animateContentSize(tween(260)),
@@ -203,9 +246,9 @@ fun DashboardScreen(
                     label = "heatmap-range",
                 ) { selected ->
                     if (selected == HeatmapRange.MONTH) {
-                        MonthHeatmap(today, studyTimeProgress.dailyMillis)
+                        MonthHeatmap(today, attemptDailyMillis)
                     } else {
-                        WeekHeatmap(today, studyTimeProgress.dailyMillis)
+                        WeekHeatmap(today, attemptDailyMillis)
                     }
                 }
             }
@@ -234,7 +277,7 @@ fun DashboardScreen(
     }
     if (showStudyTimeDialog) {
         StudyTimeGoalDialog(
-            progress = studyTimeProgress,
+            progress = attemptStudyTimeProgress,
             onDismiss = { showStudyTimeDialog = false },
             onConfirm = { minutes ->
                 onSaveStudyTimeGoal(minutes)
@@ -591,12 +634,35 @@ private fun DailyProgressReference.icon() = when (this) {
     DailyProgressReference.CUSTOM_QUIZ -> NvvIcons.FileQuestion
 }
 
+private data class AttemptSessionSummary(
+    val correctCount: Int,
+    val questionCount: Int,
+) {
+    val accuracyPercent: Int
+        get() = if (questionCount == 0) 0 else correctCount * 100 / questionCount
+}
+
 @Composable
-private fun ContrastPracticeSummary(sessions: List<ContrastPracticeSession>) {
-    val recent = sessions.take(5)
+private fun ContrastPracticeSummary(attempts: List<PracticeAttempt>) {
+    val recent = remember(attempts) {
+        attempts.filter { attempt ->
+            attempt.mode == PracticeAttemptMode.CHINESE_TO_ENGLISH ||
+                attempt.mode == PracticeAttemptMode.ENGLISH_TO_CHINESE ||
+                attempt.mode == PracticeAttemptMode.ENGLISH_DEFINITION_TO_ENGLISH
+        }.groupBy(PracticeAttempt::sessionId)
+            .values
+            .sortedByDescending { sessionAttempts -> sessionAttempts.maxOf(PracticeAttempt::timestamp) }
+            .take(5)
+            .map { sessionAttempts ->
+                AttemptSessionSummary(
+                    correctCount = sessionAttempts.count(PracticeAttempt::correct),
+                    questionCount = sessionAttempts.size,
+                )
+            }
+    }
     val latest = recent.firstOrNull()
-    val recentCorrectCount = recent.sumOf(ContrastPracticeSession::correctCount)
-    val recentQuestionCount = recent.sumOf(ContrastPracticeSession::questionCount)
+    val recentCorrectCount = recent.sumOf(AttemptSessionSummary::correctCount)
+    val recentQuestionCount = recent.sumOf(AttemptSessionSummary::questionCount)
     val recentAccuracy = if (recentQuestionCount == 0) {
         0
     } else {
@@ -665,7 +731,7 @@ private fun ContrastPracticeSummary(sessions: List<ContrastPracticeSession>) {
 
 @Composable
 private fun androidx.compose.foundation.layout.RowScope.ContrastMetricTiles(
-    latest: ContrastPracticeSession,
+    latest: AttemptSessionSummary,
     recentAccuracy: Int,
     recentCorrectCount: Int,
     recentQuestionCount: Int,

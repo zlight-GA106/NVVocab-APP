@@ -2,9 +2,13 @@ package com.zlight106.nvvocab.data.network
 
 import com.zlight106.nvvocab.data.AuthSession
 import com.zlight106.nvvocab.data.ContrastPracticeType
+import com.zlight106.nvvocab.data.ParaphraseSeed
 import com.zlight106.nvvocab.data.PracticeDifficulty
+import com.zlight106.nvvocab.data.PracticeAttempt
+import com.zlight106.nvvocab.data.PracticeAttemptMode
 import com.zlight106.nvvocab.data.QuizOption
 import com.zlight106.nvvocab.data.QuizQuestion
+import com.zlight106.nvvocab.data.QuizQuestionType
 import com.zlight106.nvvocab.data.QuizSource
 import com.zlight106.nvvocab.data.ReviewLogEntry
 import com.zlight106.nvvocab.data.SupabaseConfig
@@ -275,58 +279,43 @@ class SupabaseGateway {
         entries: List<WrongQuestionEntry>,
     ) = withContext(Dispatchers.IO) {
         if (entries.isEmpty()) return@withContext
-        val payload = JSONArray().apply {
-            entries.forEach { entry ->
-                put(
-                    JSONObject()
-                        .put("id", entry.id)
-                        .put("user_id", session.userId)
-                        .put("source", entry.source.name)
-                        .put("bank_id", entry.bankId ?: JSONObject.NULL)
-                        .put("bank_name", entry.bankName)
-                        .put("question_key", entry.questionKey)
-                        .put("question_text", entry.questionText)
-                        .put(
-                            "options",
-                            JSONArray().apply {
-                                entry.options.forEach { option ->
-                                    put(JSONObject().put("id", option.id).put("text", option.text))
-                                }
-                            },
-                        )
-                        .put("correct_answers", JSONArray(entry.correctAnswers.sorted()))
-                        .put("wrong_count", entry.wrongCount)
-                        .put("correct_count", entry.correctCount)
-                        .put("favorite", entry.favorite)
-                        .put("ai_analysis", entry.aiAnalysis ?: JSONObject.NULL)
-                        .put("last_wrong_at", Instant.ofEpochMilli(entry.lastWrongAt).toString())
-                        .put(
-                            "last_reviewed_at",
-                            entry.lastReviewedAt?.let { Instant.ofEpochMilli(it).toString() } ?: JSONObject.NULL,
-                        ),
-                )
-            }
+        val send: (Boolean) -> Unit = { includeMetadata ->
+            request(
+                config = config,
+                path = "/rest/v1/wrong_questions?on_conflict=user_id,source,question_key",
+                method = "POST",
+                body = wrongQuestionPayload(entries, session.userId, includeMetadata).toString(),
+                accessToken = session.accessToken,
+                prefer = "resolution=merge-duplicates,return=minimal",
+            )
+            Unit
         }
-        request(
-            config = config,
-            path = "/rest/v1/wrong_questions?on_conflict=user_id,source,question_key",
-            method = "POST",
-            body = payload.toString(),
-            accessToken = session.accessToken,
-            prefer = "resolution=merge-duplicates,return=minimal",
-        )
+        runCatching { send(true) }.getOrElse { send(false) }
     }
 
     suspend fun fetchWrongQuestions(
         config: SupabaseConfig,
         session: AuthSession,
     ): List<WrongQuestionEntry> = withContext(Dispatchers.IO) {
-        val response = request(
-            config = config,
-            path = "/rest/v1/wrong_questions?select=id,user_id,source,bank_id,bank_name,question_key,question_text,options,correct_answers,wrong_count,correct_count,favorite,ai_analysis,last_wrong_at,last_reviewed_at&order=last_wrong_at.desc",
-            method = "GET",
-            accessToken = session.accessToken,
-        )
+        val baseColumns = "id,user_id,source,bank_id,bank_name,question_key,question_text,options," +
+            "correct_answers,wrong_count,correct_count,favorite,ai_analysis,last_wrong_at,last_reviewed_at"
+        val metadataColumns = ",question_type,reference_answer,accepted_answers,explanation,category," +
+            "source_reference,last_user_answer,hint_used_count"
+        val response = runCatching {
+            request(
+                config = config,
+                path = "/rest/v1/wrong_questions?select=$baseColumns$metadataColumns&order=last_wrong_at.desc",
+                method = "GET",
+                accessToken = session.accessToken,
+            )
+        }.getOrElse {
+            request(
+                config = config,
+                path = "/rest/v1/wrong_questions?select=$baseColumns&order=last_wrong_at.desc",
+                method = "GET",
+                accessToken = session.accessToken,
+            )
+        }
         val payload = JSONArray(response)
         buildList {
             for (index in 0 until payload.length()) {
@@ -362,6 +351,196 @@ class SupabaseGateway {
                         lastWrongAt = parseInstant(item.optString("last_wrong_at")),
                         lastReviewedAt = item.optNullableString("last_reviewed_at")?.let(::parseInstant),
                         dirty = false,
+                        questionType = item.optEnum("question_type", QuizQuestionType.MULTIPLE_CHOICE),
+                        referenceAnswer = item.optNullableString("reference_answer"),
+                        acceptedAnswers = item.optJSONArray("accepted_answers").toStringSet(),
+                        explanation = item.optNullableString("explanation"),
+                        category = item.optNullableString("category"),
+                        sourceReference = item.optNullableString("source_reference"),
+                        lastUserAnswer = item.optNullableString("last_user_answer"),
+                        hintUsedCount = item.optInt("hint_used_count", 0),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun upsertParaphraseSeeds(
+        config: SupabaseConfig,
+        session: AuthSession,
+        entries: List<ParaphraseSeed>,
+    ) = withContext(Dispatchers.IO) {
+        if (entries.isEmpty()) return@withContext
+        val payload = JSONArray().apply {
+            entries.forEach { entry ->
+                put(
+                    JSONObject()
+                        .put("id", entry.id)
+                        .put("user_id", session.userId)
+                        .put("source_text", entry.sourceText)
+                        .put("target_text", entry.targetText)
+                        .put("context_text", entry.contextText ?: JSONObject.NULL)
+                        .put("source_reference", entry.sourceReference ?: JSONObject.NULL)
+                        .put("notes", entry.notes ?: JSONObject.NULL)
+                        .put("created_at", Instant.ofEpochMilli(entry.createdAt).toString())
+                        .put("updated_at", Instant.ofEpochMilli(entry.updatedAt).toString()),
+                )
+            }
+        }
+        request(
+            config = config,
+            path = "/rest/v1/paraphrase_seeds?on_conflict=id",
+            method = "POST",
+            body = payload.toString(),
+            accessToken = session.accessToken,
+            prefer = "resolution=merge-duplicates,return=minimal",
+        )
+    }
+
+    suspend fun fetchParaphraseSeeds(
+        config: SupabaseConfig,
+        session: AuthSession,
+    ): List<ParaphraseSeed> = withContext(Dispatchers.IO) {
+        val columns = "id,user_id,source_text,target_text,context_text,source_reference,notes,created_at,updated_at"
+        val response = request(
+            config = config,
+            path = "/rest/v1/paraphrase_seeds?select=$columns&order=created_at.asc,id.asc",
+            method = "GET",
+            accessToken = session.accessToken,
+        )
+        val payload = JSONArray(response)
+        buildList {
+            for (index in 0 until payload.length()) {
+                val item = payload.getJSONObject(index)
+                add(
+                    ParaphraseSeed(
+                        id = item.getString("id"),
+                        userId = item.optString("user_id").ifBlank { session.userId },
+                        sourceText = item.getString("source_text"),
+                        targetText = item.getString("target_text"),
+                        contextText = item.optNullableString("context_text"),
+                        sourceReference = item.optNullableString("source_reference"),
+                        notes = item.optNullableString("notes"),
+                        createdAt = parseInstant(item.getString("created_at")),
+                        updatedAt = parseInstant(item.getString("updated_at")),
+                        dirty = false,
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun deleteParaphraseSeeds(
+        config: SupabaseConfig,
+        session: AuthSession,
+        ids: List<String>,
+    ) = withContext(Dispatchers.IO) {
+        ids.forEach { id ->
+            val encodedId = URLEncoder.encode(id, StandardCharsets.UTF_8.toString())
+            request(
+                config = config,
+                path = "/rest/v1/paraphrase_seeds?id=eq.$encodedId",
+                method = "DELETE",
+                accessToken = session.accessToken,
+                prefer = "return=minimal",
+            )
+        }
+    }
+
+    suspend fun upsertPracticeAttempts(
+        config: SupabaseConfig,
+        session: AuthSession,
+        attempts: List<PracticeAttempt>,
+    ) = withContext(Dispatchers.IO) {
+        if (attempts.isEmpty()) return@withContext
+        val payload = JSONArray()
+        attempts.forEach { attempt ->
+            payload.put(
+                JSONObject()
+                    .put("id", attempt.id)
+                    .put("user_id", session.userId)
+                    .put("session_id", attempt.sessionId)
+                    .put("item_id", attempt.itemId)
+                    .put("source_id", attempt.sourceId ?: JSONObject.NULL)
+                    .put("mode", attempt.mode.name)
+                    .put("sequence_index", attempt.sequenceIndex)
+                    .put("question", attempt.question)
+                    .put(
+                        "options",
+                        JSONArray().apply {
+                            attempt.options.forEach { option ->
+                                put(JSONObject().put("id", option.id).put("text", option.text))
+                            }
+                        },
+                    )
+                    .put("first_answer", attempt.firstAnswer)
+                    .put("final_answer", attempt.finalAnswer)
+                    .put("reference_answer", attempt.referenceAnswer)
+                    .put("accepted_answers", JSONArray(attempt.acceptedAnswers.sorted()))
+                    .put("explanation", attempt.explanation ?: JSONObject.NULL)
+                    .put("correct", attempt.correct)
+                    .put("first_answer_correct", attempt.firstAnswerCorrect)
+                    .put("active_time_ms", attempt.activeTimeMs)
+                    .put("hint_used", attempt.hintUsed)
+                    .put("answered_at", Instant.ofEpochMilli(attempt.timestamp).toString()),
+            )
+        }
+        request(
+            config = config,
+            path = "/rest/v1/practice_attempts?on_conflict=id",
+            method = "POST",
+            body = payload.toString(),
+            accessToken = session.accessToken,
+            prefer = "resolution=merge-duplicates,return=minimal",
+        )
+    }
+
+    suspend fun fetchPracticeAttempts(
+        config: SupabaseConfig,
+        session: AuthSession,
+    ): List<PracticeAttempt> = withContext(Dispatchers.IO) {
+        val columns = "id,user_id,session_id,item_id,source_id,mode,sequence_index,question,options,first_answer," +
+            "final_answer,reference_answer,accepted_answers,explanation,correct,first_answer_correct," +
+            "active_time_ms,hint_used,answered_at"
+        val response = request(
+            config = config,
+            path = "/rest/v1/practice_attempts?select=$columns&order=answered_at.asc,sequence_index.asc",
+            method = "GET",
+            accessToken = session.accessToken,
+        )
+        val payload = JSONArray(response)
+        buildList {
+            for (index in 0 until payload.length()) {
+                val item = payload.getJSONObject(index)
+                val optionPayload = item.optJSONArray("options") ?: JSONArray()
+                val options = buildList {
+                    for (optionIndex in 0 until optionPayload.length()) {
+                        val option = optionPayload.optJSONObject(optionIndex) ?: continue
+                        add(QuizOption(option.optString("id"), option.optString("text")))
+                    }
+                }
+                add(
+                    PracticeAttempt(
+                        id = item.getString("id"),
+                        userId = item.optString("user_id").ifBlank { session.userId },
+                        sessionId = item.getString("session_id"),
+                        itemId = item.getString("item_id"),
+                        sourceId = item.optNullableString("source_id"),
+                        mode = item.optEnum("mode", PracticeAttemptMode.QUIZ_CHOICE),
+                        sequenceIndex = item.optInt("sequence_index"),
+                        question = item.optString("question"),
+                        options = options,
+                        firstAnswer = item.optString("first_answer"),
+                        finalAnswer = item.optString("final_answer"),
+                        referenceAnswer = item.optString("reference_answer"),
+                        acceptedAnswers = item.optJSONArray("accepted_answers").toStringSet(),
+                        explanation = item.optNullableString("explanation"),
+                        correct = item.optBoolean("correct"),
+                        firstAnswerCorrect = item.optBoolean("first_answer_correct"),
+                        activeTimeMs = item.optLong("active_time_ms").coerceAtLeast(0L),
+                        hintUsed = item.optBoolean("hint_used"),
+                        timestamp = parseInstant(item.optString("answered_at")),
+                        dirty = false,
                     ),
                 )
             }
@@ -376,6 +555,12 @@ class SupabaseGateway {
                     .put("original_index", question.originalIndex)
                     .put("score", question.score)
                     .put("text", question.text)
+                    .put("question_type", question.type.name)
+                    .put("reference_answer", question.referenceAnswer ?: JSONObject.NULL)
+                    .put("accepted_answers", JSONArray(question.acceptedAnswers.sorted()))
+                    .put("explanation", question.explanation ?: JSONObject.NULL)
+                    .put("category", question.category ?: JSONObject.NULL)
+                    .put("source_reference", question.sourceReference ?: JSONObject.NULL)
                     .put(
                         "options",
                         JSONArray().apply {
@@ -418,6 +603,12 @@ class SupabaseGateway {
                         text = question.optString("text"),
                         options = options,
                         answers = answers,
+                        type = question.optEnum("question_type", QuizQuestionType.MULTIPLE_CHOICE),
+                        referenceAnswer = question.optNullableString("reference_answer"),
+                        acceptedAnswers = question.optJSONArray("accepted_answers").toStringSet(),
+                        explanation = question.optNullableString("explanation"),
+                        category = question.optNullableString("category"),
+                        sourceReference = question.optNullableString("source_reference"),
                     ),
                 )
             }
@@ -432,6 +623,64 @@ class SupabaseGateway {
 
     private fun JSONObject.optNullableString(key: String): String? =
         if (isNull(key)) null else optString(key).trim().takeIf(String::isNotEmpty)
+
+    private fun JSONArray?.toStringSet(): Set<String> {
+        if (this == null) return emptySet()
+        return buildSet {
+            for (index in 0 until length()) {
+                optString(index).trim().takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+    }
+
+    private fun wrongQuestionPayload(
+        entries: List<WrongQuestionEntry>,
+        userId: String,
+        includeMetadata: Boolean,
+    ): JSONArray = JSONArray().apply {
+        entries.forEach { entry ->
+            put(
+                JSONObject()
+                    .put("id", entry.id)
+                    .put("user_id", userId)
+                    .put("source", entry.source.name)
+                    .put("bank_id", entry.bankId ?: JSONObject.NULL)
+                    .put("bank_name", entry.bankName)
+                    .put("question_key", entry.questionKey)
+                    .put("question_text", entry.questionText)
+                    .put(
+                        "options",
+                        JSONArray().apply {
+                            entry.options.forEach { option ->
+                                put(JSONObject().put("id", option.id).put("text", option.text))
+                            }
+                        },
+                    )
+                    .put("correct_answers", JSONArray(entry.correctAnswers.sorted()))
+                    .put("wrong_count", entry.wrongCount)
+                    .put("correct_count", entry.correctCount)
+                    .put("favorite", entry.favorite)
+                    .put("ai_analysis", entry.aiAnalysis ?: JSONObject.NULL)
+                    .put("last_wrong_at", Instant.ofEpochMilli(entry.lastWrongAt).toString())
+                    .put(
+                        "last_reviewed_at",
+                        entry.lastReviewedAt?.let { Instant.ofEpochMilli(it).toString() } ?: JSONObject.NULL,
+                    )
+                    .apply {
+                        if (includeMetadata) {
+                            put("question_type", entry.questionType.name)
+                            put("reference_answer", entry.referenceAnswer ?: JSONObject.NULL)
+                            put("accepted_answers", JSONArray(entry.acceptedAnswers.sorted()))
+                            put("explanation", entry.explanation ?: JSONObject.NULL)
+                            put("category", entry.category ?: JSONObject.NULL)
+                            put("source_reference", entry.sourceReference ?: JSONObject.NULL)
+                            put("last_user_answer", entry.lastUserAnswer ?: JSONObject.NULL)
+                            put("hint_used_count", entry.hintUsedCount)
+                        }
+                    },
+            )
+        }
+    }
 
     private fun parseSession(payload: JSONObject, fallbackEmail: String): AuthSession? {
         val accessToken = payload.optString("access_token")

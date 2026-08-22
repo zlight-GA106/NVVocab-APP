@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.QuizQuestionType
 import com.zlight106.nvvocab.data.WrongQuestionSort
 import com.zlight106.nvvocab.data.WrongQuestionSource
 import com.zlight106.nvvocab.data.formatOptionAnswers
@@ -41,10 +42,23 @@ import com.zlight106.nvvocab.ui.components.QuestionOptionDetails
 import com.zlight106.nvvocab.ui.components.SectionCard
 import com.zlight106.nvvocab.ui.components.SegmentedRow
 import com.zlight106.nvvocab.ui.icons.NvvIcons
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 private enum class WrongBookView {
     ERRORS,
     FAVORITES,
+}
+
+private enum class WrongTimeRange {
+    ALL,
+    TODAY,
+    LAST_7_DAYS,
+    LAST_30_DAYS,
+    OLDER,
 }
 
 @Composable
@@ -56,20 +70,24 @@ fun WrongBookPanel(
     val analyzingId by viewModel.analyzingWrongQuestionId.collectAsStateWithLifecycle()
     var view by remember { mutableStateOf(WrongBookView.ERRORS) }
     var sort by remember { mutableStateOf(WrongQuestionSort.WRONG_COUNT) }
+    var timeRange by remember { mutableStateOf(WrongTimeRange.ALL) }
     var selectedGroupKey by remember { mutableStateOf<String?>(null) }
     val availableEntries = remember(entries, view) {
         entries.filter { view == WrongBookView.ERRORS || it.favorite }
     }
-    val availableGroups = remember(availableEntries) {
-        WrongQuestionGrouping.group(availableEntries)
+    val timeFilteredEntries = remember(availableEntries, timeRange) {
+        availableEntries.filter { timeRange.matches(it.lastWrongAt) }
+    }
+    val availableGroups = remember(timeFilteredEntries) {
+        WrongQuestionGrouping.group(timeFilteredEntries)
     }
     LaunchedEffect(availableGroups, selectedGroupKey) {
         if (selectedGroupKey != null && availableGroups.none { it.key == selectedGroupKey }) {
             selectedGroupKey = null
         }
     }
-    val visible = remember(availableEntries, sort, selectedGroupKey) {
-        availableEntries.asSequence()
+    val visible = remember(timeFilteredEntries, sort, selectedGroupKey) {
+        timeFilteredEntries.asSequence()
             .filter { selectedGroupKey == null || WrongQuestionGrouping.keyOf(it) == selectedGroupKey }
             .let { sequence ->
                 when (sort) {
@@ -106,9 +124,10 @@ fun WrongBookPanel(
                     )
                 }
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    if (maxWidth < 520.dp) {
+                    if (maxWidth < 760.dp) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             WrongBankDropdown(availableGroups, selectedGroupKey, { selectedGroupKey = it })
+                            WrongTimeDropdown(timeRange, { timeRange = it })
                             WrongSortDropdown(sort, { sort = it })
                             Button(
                                 onClick = { onStartSession(PracticeSessionRequest.WrongBook(visible)) },
@@ -131,6 +150,7 @@ fun WrongBookPanel(
                                 onChange = { selectedGroupKey = it },
                                 modifier = Modifier.weight(1f),
                             )
+                            WrongTimeDropdown(timeRange, { timeRange = it }, Modifier.weight(1f))
                             WrongSortDropdown(sort, { sort = it }, Modifier.weight(1f))
                             Button(
                                 onClick = { onStartSession(PracticeSessionRequest.WrongBook(visible)) },
@@ -206,6 +226,29 @@ private fun WrongBankDropdown(
 }
 
 @Composable
+private fun WrongTimeDropdown(
+    value: WrongTimeRange,
+    onChange: (WrongTimeRange) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    NvvDropdown(
+        label = "日期筛选",
+        value = value,
+        options = listOf(
+            WrongTimeRange.ALL to "全部时间",
+            WrongTimeRange.TODAY to "今天",
+            WrongTimeRange.LAST_7_DAYS to "最近 7 天",
+            WrongTimeRange.LAST_30_DAYS to "最近 30 天",
+            WrongTimeRange.OLDER to "30 天以前",
+        ),
+        icon = NvvIcons.Timer,
+        onChange = onChange,
+        modifier = modifier,
+        compact = true,
+    )
+}
+
+@Composable
 private fun WrongQuestionGroupHeader(group: WrongQuestionGroup) {
     Surface(
         shape = MaterialTheme.shapes.large,
@@ -224,7 +267,7 @@ private fun WrongQuestionGroupHeader(group: WrongQuestionGroup) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(group.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(
-                    if (group.source == WrongQuestionSource.QUIZ) "本地题库" else "对照练习",
+                    "${if (group.source == WrongQuestionSource.QUIZ) "本地题库" else "对照练习"} · 最近 ${formatWrongTime(group.entries.maxOf(WrongQuestionEntry::lastWrongAt))}",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -325,16 +368,40 @@ private fun WrongQuestionCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            QuestionOptionDetails(
-                options = entry.options,
-                correctAnswers = entry.correctAnswers,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                "正确答案：${formatOptionAnswers(entry.options, entry.correctAnswers)}",
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Text("最近错误：${formatWrongTime(entry.lastWrongAt)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (entry.questionType == QuizQuestionType.FILL_BLANK) {
+                entry.lastUserAnswer?.takeIf(String::isNotBlank)?.let { answer ->
+                    Text("最近作答：$answer", color = MaterialTheme.colorScheme.error)
+                }
+                Text(
+                    "参考答案：${entry.referenceAnswer.orEmpty()}",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (entry.acceptedAnswers.isNotEmpty()) {
+                    Text(
+                        "可接受答案：${entry.acceptedAnswers.joinToString("；")}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                entry.explanation?.takeIf(String::isNotBlank)?.let { explanation ->
+                    Text("题目解析：$explanation", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (entry.hintUsedCount > 0) {
+                    Text("使用提示 ${entry.hintUsedCount} 次", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                QuestionOptionDetails(
+                    options = entry.options,
+                    correctAnswers = entry.correctAnswers,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "正确答案：${formatOptionAnswers(entry.options, entry.correctAnswers)}",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             entry.aiAnalysis?.takeIf(String::isNotBlank)?.let { analysis ->
                 Surface(
                     shape = MaterialTheme.shapes.large,
@@ -366,3 +433,23 @@ private fun WrongQuestionCard(
         }
     }
 }
+
+private fun WrongTimeRange.matches(timestamp: Long): Boolean {
+    if (this == WrongTimeRange.ALL) return true
+    val zone = ZoneId.systemDefault()
+    val date = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+    val daysAgo = ChronoUnit.DAYS.between(date, LocalDate.now(zone))
+    return when (this) {
+        WrongTimeRange.ALL -> true
+        WrongTimeRange.TODAY -> daysAgo == 0L
+        WrongTimeRange.LAST_7_DAYS -> daysAgo in 0L..6L
+        WrongTimeRange.LAST_30_DAYS -> daysAgo in 0L..29L
+        WrongTimeRange.OLDER -> daysAgo >= 30L
+    }
+}
+
+private val WRONG_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm")
+
+private fun formatWrongTime(timestamp: Long): String = Instant.ofEpochMilli(timestamp)
+    .atZone(ZoneId.systemDefault())
+    .format(WRONG_TIME_FORMATTER)

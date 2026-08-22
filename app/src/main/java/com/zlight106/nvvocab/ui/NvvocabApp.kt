@@ -101,9 +101,9 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
     val tags by viewModel.bookTags.collectAsStateWithLifecycle()
     val words by viewModel.words.collectAsStateWithLifecycle()
     val quizBanks by viewModel.quizBanks.collectAsStateWithLifecycle()
-    val contrastSessions by viewModel.contrastPracticeSessions.collectAsStateWithLifecycle()
-    val dailyPracticeProgress by viewModel.dailyPracticeProgress.collectAsStateWithLifecycle()
+    val paraphraseSeeds by viewModel.paraphraseSeeds.collectAsStateWithLifecycle()
     val studyTimeProgress by viewModel.studyTimeProgress.collectAsStateWithLifecycle()
+    val practiceAttempts by viewModel.practiceAttempts.collectAsStateWithLifecycle()
     val syncRuntimeState by SyncStateMonitor.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.message) {
@@ -138,9 +138,9 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                     tags = tags,
                     words = words,
                     quizBanks = quizBanks,
-                    contrastSessions = contrastSessions,
-                    dailyPracticeProgress = dailyPracticeProgress,
+                    paraphraseSeeds = paraphraseSeeds,
                     studyTimeProgress = studyTimeProgress,
+                    practiceAttempts = practiceAttempts,
                     syncRuntimeState = syncRuntimeState,
                     activePracticeSession = activePracticeSession,
                     onStartPracticeSession = { request ->
@@ -165,9 +165,9 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                 tags = tags,
                 words = words,
                 quizBanks = quizBanks,
-                contrastSessions = contrastSessions,
-                dailyPracticeProgress = dailyPracticeProgress,
+                paraphraseSeeds = paraphraseSeeds,
                 studyTimeProgress = studyTimeProgress,
+                practiceAttempts = practiceAttempts,
                 syncRuntimeState = syncRuntimeState,
                 activePracticeSession = activePracticeSession,
                 onStartPracticeSession = { request ->
@@ -196,9 +196,9 @@ private fun AppScaffold(
     tags: List<String>,
     words: List<com.zlight106.nvvocab.data.WordEntry>,
     quizBanks: List<com.zlight106.nvvocab.data.QuizBank>,
-    contrastSessions: List<com.zlight106.nvvocab.data.ContrastPracticeSession>,
-    dailyPracticeProgress: com.zlight106.nvvocab.data.DailyPracticeProgress,
+    paraphraseSeeds: List<com.zlight106.nvvocab.data.ParaphraseSeed>,
     studyTimeProgress: com.zlight106.nvvocab.data.StudyTimeProgress,
+    practiceAttempts: List<com.zlight106.nvvocab.data.PracticeAttempt>,
     syncRuntimeState: SyncRuntimeState,
     activePracticeSession: PracticeSessionRequest?,
     onStartPracticeSession: (PracticeSessionRequest) -> Unit,
@@ -257,23 +257,25 @@ private fun AppScaffold(
                 DashboardScreen(
                     state = state,
                     words = words,
-                    contrastSessions = contrastSessions,
                     quizBanks = quizBanks,
-                    dailyProgress = dailyPracticeProgress,
                     studyTimeProgress = studyTimeProgress,
+                    practiceAttempts = practiceAttempts,
                     onSaveProgressSettings = viewModel::saveDailyProgressConfiguration,
                     onSaveStudyTimeGoal = viewModel::saveStudyTimeGoal,
                     onSaveDailyMemoSettings = viewModel::saveDailyMemoSettings,
                 )
             }
             composable(Destination.LEXICON.route) { LexiconScreen(viewModel, words, tags) }
-            composable(Destination.IMPORT.route) { ImportScreen(viewModel, tags) }
+            composable(Destination.IMPORT.route) {
+                ImportScreen(viewModel, tags, paraphraseSeeds)
+            }
             composable(Destination.DICTATE.route) {
                 DictateScreen(
                     viewModel = viewModel,
                     tags = tags,
                     quizBanks = quizBanks,
                     words = words,
+                    paraphraseSeeds = paraphraseSeeds,
                     administratorMode = state.administratorMode,
                     onAdministratorModeChange = viewModel::setAdministratorMode,
                     onStartSession = onStartPracticeSession,

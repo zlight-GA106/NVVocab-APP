@@ -44,6 +44,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.ItemMaturity
+import com.zlight106.nvvocab.data.ItemMaturitySnapshot
+import com.zlight106.nvvocab.data.PracticeAttemptMode
 import com.zlight106.nvvocab.domain.ProficiencyCalculator
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.NvvDropdown
@@ -70,6 +73,7 @@ fun LexiconScreen(
     tags: List<String>,
 ) {
     val localDataLoaded by viewModel.localDataLoaded.collectAsStateWithLifecycle()
+    val maturitySnapshots by viewModel.maturitySnapshots.collectAsStateWithLifecycle()
     var search by remember { mutableStateOf("") }
     var selectedLetter by remember { mutableStateOf<Char?>(null) }
     var selectedTag by remember { mutableStateOf<String?>(null) }
@@ -241,6 +245,7 @@ fun LexiconScreen(
                                 modifier = Modifier.weight(1f),
                                 word = word,
                                 number = chronologicalNumbers[word.id] ?: 0,
+                                maturities = maturitySnapshots.filter { it.itemId == word.id },
                                 onSpeak = { webPronunciationPlayer.speak(word.spelling) },
                                 onEditTag = { editingWord = word },
                             )
@@ -311,6 +316,7 @@ private fun LexiconSortDropdown(
 private fun WordPreviewCard(
     word: WordEntry,
     number: Int,
+    maturities: List<ItemMaturitySnapshot>,
     onSpeak: () -> Unit,
     onEditTag: () -> Unit,
     modifier: Modifier = Modifier,
@@ -389,6 +395,15 @@ private fun WordPreviewCard(
                     strokeCap = StrokeCap.Round,
                 )
             }
+            if (maturities.isNotEmpty()) {
+                Text(
+                    maturities.sortedBy { it.mode.ordinal }.joinToString("  ·  ") { snapshot ->
+                        "${snapshot.mode.shortName()} ${snapshot.maturity.displayName()}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Text(
                 "导入 ${dateFormatter.format(Instant.ofEpochMilli(word.introTime))}  ·  ${word.repetitions} 次复习",
                 style = MaterialTheme.typography.bodySmall,
@@ -396,6 +411,24 @@ private fun WordPreviewCard(
             )
         }
     }
+}
+
+private fun PracticeAttemptMode.shortName(): String = when (this) {
+    PracticeAttemptMode.WORD_DICTATION -> "默写"
+    PracticeAttemptMode.WORD_SPELLING -> "拼写"
+    PracticeAttemptMode.QUIZ_CHOICE -> "选择"
+    PracticeAttemptMode.QUIZ_FILL_BLANK -> "填空"
+    PracticeAttemptMode.CHINESE_TO_ENGLISH -> "中翻英"
+    PracticeAttemptMode.ENGLISH_TO_CHINESE -> "英翻中"
+    PracticeAttemptMode.ENGLISH_DEFINITION_TO_ENGLISH -> "语义压缩"
+}
+
+private fun ItemMaturity.displayName(): String = when (this) {
+    ItemMaturity.NEW -> "新内容"
+    ItemMaturity.LEARNING -> "学习中"
+    ItemMaturity.FAMILIAR -> "熟悉"
+    ItemMaturity.MATURE -> "成熟"
+    ItemMaturity.MASTERED -> "已掌握"
 }
 
 @Composable

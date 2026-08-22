@@ -55,9 +55,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.DictationMode
+import com.zlight106.nvvocab.data.ParaphraseSeed
 import com.zlight106.nvvocab.data.QueueSort
 import com.zlight106.nvvocab.data.QuizBank
 import com.zlight106.nvvocab.data.QuizQuestion
+import com.zlight106.nvvocab.data.QuizQuestionType
+import com.zlight106.nvvocab.data.QuizQuestionTypeFilter
 import com.zlight106.nvvocab.data.QuizQueueMode
 import com.zlight106.nvvocab.data.QuizReviewPreferences
 import com.zlight106.nvvocab.data.ReviewCategory
@@ -88,6 +91,7 @@ fun DictateScreen(
     tags: List<String>,
     quizBanks: List<QuizBank>,
     words: List<WordEntry>,
+    paraphraseSeeds: List<ParaphraseSeed>,
     administratorMode: Boolean,
     onAdministratorModeChange: (Boolean) -> Unit,
     onStartSession: (PracticeSessionRequest) -> Unit,
@@ -128,8 +132,23 @@ fun DictateScreen(
                 )
                 ReviewCategory.CONTRAST -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     AdministratorModeToggle(administratorMode, onAdministratorModeChange)
-                    ContrastPracticePanel(viewModel, words, tags, quizBanks, onStartSession)
+                    ContrastPracticePanel(
+                        viewModel = viewModel,
+                        words = words,
+                        paraphraseSeeds = paraphraseSeeds,
+                        tags = tags,
+                        quizBanks = quizBanks,
+                        onStartSession = onStartSession,
+                    )
                 }
+                ReviewCategory.MIXED -> MixedReviewPanel(
+                    viewModel = viewModel,
+                    words = words,
+                    paraphraseSeeds = paraphraseSeeds,
+                    tags = tags,
+                    initialPreferences = appState.mixedReviewPreferences,
+                    onStartSession = onStartSession,
+                )
                 ReviewCategory.WRONG_BOOK -> WrongBookPanel(viewModel, onStartSession)
             }
         }
@@ -178,12 +197,14 @@ private fun ReviewCategorySegment(
         ReviewCategory.WORDS -> "单词复习"
         ReviewCategory.QUESTIONS -> "题库练习"
         ReviewCategory.CONTRAST -> "对照练习"
+        ReviewCategory.MIXED -> "混合复习"
         ReviewCategory.WRONG_BOOK -> "错题本"
     }
     val icon = when (category) {
         ReviewCategory.WORDS -> NvvIcons.BrainCircuit
         ReviewCategory.QUESTIONS -> NvvIcons.FileQuestion
         ReviewCategory.CONTRAST -> NvvIcons.Sparkles
+        ReviewCategory.MIXED -> NvvIcons.RefreshCw
         ReviewCategory.WRONG_BOOK -> NvvIcons.Bookmark
     }
     ModeSegment(
@@ -394,6 +415,11 @@ private fun QuizReviewPanel(
     var randomCount by remember { mutableStateOf(initialPreferences.randomCount) }
     var randomizeOptions by remember { mutableStateOf(initialPreferences.randomizeOptions) }
     var unifiedSettlement by remember { mutableStateOf(initialPreferences.unifiedSettlement) }
+    var questionTypeFilter by remember { mutableStateOf(initialPreferences.questionTypeFilter) }
+    var ignoreFillBlankCase by remember { mutableStateOf(initialPreferences.ignoreFillBlankCase) }
+    var timeLimitEnabled by remember { mutableStateOf(initialPreferences.timeLimitEnabled) }
+    var timeLimitText by remember { mutableStateOf(initialPreferences.timeLimitText) }
+    var includeTimingInXml by remember { mutableStateOf(initialPreferences.includeTimingInXml) }
     var queue by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
     var records by remember { mutableStateOf<List<QuizAnswerRecord>>(emptyList()) }
@@ -427,6 +453,11 @@ private fun QuizReviewPanel(
                 randomCount = randomCount,
                 randomizeOptions = randomizeOptions,
                 unifiedSettlement = unifiedSettlement,
+                questionTypeFilter = questionTypeFilter,
+                ignoreFillBlankCase = ignoreFillBlankCase,
+                timeLimitEnabled = timeLimitEnabled,
+                timeLimitText = timeLimitText,
+                includeTimingInXml = includeTimingInXml,
             ),
         )
     }
@@ -454,6 +485,13 @@ private fun QuizReviewPanel(
 
     fun startQuiz() {
         val bank = selectedBank ?: return
+        if (timeLimitEnabled) {
+            val configuredLimit = timeLimitText.toIntOrNull()
+            if (configuredLimit == null || configuredLimit !in 5..300) {
+                configurationError = "单题限时必须设置为 5 至 300 秒。"
+                return
+            }
+        }
         val start = rangeStart.toIntOrNull()
         val end = rangeEnd.toIntOrNull()
         if (start == null || end == null || start !in 1..bank.questionCount || end !in start..bank.questionCount) {
@@ -461,7 +499,12 @@ private fun QuizReviewPanel(
             return
         }
         viewModel.loadQuizQuestions(bank.id) { allQuestions ->
-            val ranged = allQuestions.filter { it.originalIndex + 1 in start..end }
+            val ranged = allQuestions.filter { question ->
+                question.originalIndex + 1 in start..end && when (questionTypeFilter) {
+                    QuizQuestionTypeFilter.MULTIPLE_CHOICE -> question.type == QuizQuestionType.MULTIPLE_CHOICE
+                    QuizQuestionTypeFilter.FILL_BLANK -> question.type == QuizQuestionType.FILL_BLANK
+                }
+            }
             val selectedQuestions = if (queueMode == QuizQueueMode.RANDOM) {
                 val count = randomCount.toIntOrNull()
                 if (count == null || count !in 1..ranged.size) {
@@ -473,7 +516,13 @@ private fun QuizReviewPanel(
                 ranged
             }
             val prepared = if (randomizeOptions) {
-                selectedQuestions.map { question -> QuizOptionRandomizer.randomize(question) }
+                selectedQuestions.map { question ->
+                    if (question.type == QuizQuestionType.MULTIPLE_CHOICE) {
+                        QuizOptionRandomizer.randomize(question)
+                    } else {
+                        question
+                    }
+                }
             } else {
                 selectedQuestions
             }
@@ -488,6 +537,13 @@ private fun QuizReviewPanel(
                     PracticeSessionRequest.Quiz(
                         queue = prepared,
                         unifiedSettlement = unifiedSettlement,
+                        ignoreFillBlankCase = ignoreFillBlankCase,
+                        timeLimitSeconds = if (timeLimitEnabled) {
+                            timeLimitText.toIntOrNull()?.coerceIn(5, 300)
+                        } else {
+                            null
+                        },
+                        includeTimingInXml = includeTimingInXml,
                     ),
                 )
             }
@@ -548,6 +604,29 @@ private fun QuizReviewPanel(
                             Icon(NvvIcons.Eye, null)
                             Text("预览题库", Modifier.padding(start = 6.dp))
                         }
+                    }
+                    Text("题型", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SegmentedRow(Modifier.fillMaxWidth()) {
+                        ModeSegment(
+                            modifier = Modifier.weight(1f),
+                            selected = questionTypeFilter == QuizQuestionTypeFilter.MULTIPLE_CHOICE,
+                            onClick = {
+                                questionTypeFilter = QuizQuestionTypeFilter.MULTIPLE_CHOICE
+                                persist()
+                            },
+                            label = "选择题",
+                            icon = NvvIcons.ListChecks,
+                        )
+                        ModeSegment(
+                            modifier = Modifier.weight(1f),
+                            selected = questionTypeFilter == QuizQuestionTypeFilter.FILL_BLANK,
+                            onClick = {
+                                questionTypeFilter = QuizQuestionTypeFilter.FILL_BLANK
+                                persist()
+                            },
+                            label = "填空题",
+                            icon = NvvIcons.Pencil,
+                        )
                     }
                     SegmentedRow(Modifier.fillMaxWidth()) {
                         ModeSegment(
@@ -614,6 +693,23 @@ private fun QuizReviewPanel(
                     }
                     SelectionRow(
                         onClick = {
+                            ignoreFillBlankCase = !ignoreFillBlankCase
+                            persist()
+                        },
+                        spacing = 10.dp,
+                    ) {
+                        Checkbox(checked = ignoreFillBlankCase, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("填空题忽略大小写", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "关闭后，英文命令和文本按原始大小写严格判定。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    SelectionRow(
+                        onClick = {
                             unifiedSettlement = !unifiedSettlement
                             persist()
                         },
@@ -624,6 +720,48 @@ private fun QuizReviewPanel(
                             Text("统一结算", style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "答题期间可返回修改选择，完成最后一题后统一显示结果。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    SelectionRow(
+                        onClick = {
+                            timeLimitEnabled = !timeLimitEnabled
+                            persist()
+                        },
+                        spacing = 10.dp,
+                    ) {
+                        Checkbox(checked = timeLimitEnabled, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("启用单题限时", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "每题独立倒计时，超时后按未作答结算。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (timeLimitEnabled) {
+                        NumberField(
+                            modifier = Modifier.fillMaxWidth(),
+                            value = timeLimitText,
+                            onValueChange = { timeLimitText = it; persist() },
+                            label = "单题限时秒数",
+                        )
+                    }
+                    SelectionRow(
+                        onClick = {
+                            includeTimingInXml = !includeTimingInXml
+                            persist()
+                        },
+                        spacing = 10.dp,
+                    ) {
+                        Checkbox(checked = !includeTimingInXml, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("不保存用时到本地 XML", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "关闭遥测 XML 与错题 XML 中的每题有效用时字段。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

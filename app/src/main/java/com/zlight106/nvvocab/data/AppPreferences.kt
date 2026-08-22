@@ -44,6 +44,14 @@ class AppPreferences(context: Context) {
             }
             else -> storedAnalysisPrompt
         }
+        val mixedReviewPrompt = preferences.getString(
+            KEY_AI_MIXED_REVIEW_PROMPT,
+            DEFAULT_MIXED_REVIEW_PROMPT,
+        ).orEmpty().trim().ifBlank { DEFAULT_MIXED_REVIEW_PROMPT }
+        val fillBlankEvaluationPrompt = preferences.getString(
+            KEY_AI_FILL_BLANK_EVALUATION_PROMPT,
+            DEFAULT_FILL_BLANK_EVALUATION_PROMPT,
+        ).orEmpty().trim().ifBlank { DEFAULT_FILL_BLANK_EVALUATION_PROMPT }
         return AiSettings(
             provider = provider,
             baseUrl = preferences.getString(KEY_AI_BASE_URL, "https://api.deepseek.com")
@@ -51,6 +59,8 @@ class AppPreferences(context: Context) {
             apiKey = preferences.getString(KEY_AI_API_KEY, "").orEmpty().trim(),
             model = preferences.getString(KEY_AI_MODEL, "deepseek-v4-flash").orEmpty().trim(),
             systemPrompt = resolvedPrompt,
+            mixedReviewPrompt = mixedReviewPrompt,
+            fillBlankEvaluationPrompt = fillBlankEvaluationPrompt,
             analysisPrompt = resolvedAnalysisPrompt,
         )
     }
@@ -62,6 +72,8 @@ class AppPreferences(context: Context) {
             .putString(KEY_AI_API_KEY, settings.apiKey.trim())
             .putString(KEY_AI_MODEL, settings.model.trim())
             .putString(KEY_AI_SYSTEM_PROMPT, settings.systemPrompt.trim())
+            .putString(KEY_AI_MIXED_REVIEW_PROMPT, settings.mixedReviewPrompt.trim())
+            .putString(KEY_AI_FILL_BLANK_EVALUATION_PROMPT, settings.fillBlankEvaluationPrompt.trim())
             .putString(KEY_AI_ANALYSIS_PROMPT, settings.analysisPrompt.trim())
             .apply()
     }
@@ -188,6 +200,11 @@ class AppPreferences(context: Context) {
         randomCount = preferences.getString(KEY_QUIZ_REVIEW_RANDOM_COUNT, "20").orEmpty(),
         randomizeOptions = preferences.getBoolean(KEY_QUIZ_REVIEW_RANDOM_OPTIONS, false),
         unifiedSettlement = preferences.getBoolean(KEY_QUIZ_REVIEW_UNIFIED_SETTLEMENT, false),
+        questionTypeFilter = readEnum(KEY_QUIZ_REVIEW_QUESTION_TYPE, QuizQuestionTypeFilter.MULTIPLE_CHOICE),
+        ignoreFillBlankCase = preferences.getBoolean(KEY_QUIZ_REVIEW_IGNORE_CASE, true),
+        timeLimitEnabled = preferences.getBoolean(KEY_QUIZ_REVIEW_TIME_ENABLED, false),
+        timeLimitText = preferences.getString(KEY_QUIZ_REVIEW_TIME, "30").orEmpty(),
+        includeTimingInXml = preferences.getBoolean(KEY_QUIZ_REVIEW_INCLUDE_TIMING_XML, true),
     )
 
     fun saveQuizReviewPreferences(value: QuizReviewPreferences) {
@@ -199,6 +216,11 @@ class AppPreferences(context: Context) {
             .putString(KEY_QUIZ_REVIEW_RANDOM_COUNT, value.randomCount)
             .putBoolean(KEY_QUIZ_REVIEW_RANDOM_OPTIONS, value.randomizeOptions)
             .putBoolean(KEY_QUIZ_REVIEW_UNIFIED_SETTLEMENT, value.unifiedSettlement)
+            .putString(KEY_QUIZ_REVIEW_QUESTION_TYPE, value.questionTypeFilter.name)
+            .putBoolean(KEY_QUIZ_REVIEW_IGNORE_CASE, value.ignoreFillBlankCase)
+            .putBoolean(KEY_QUIZ_REVIEW_TIME_ENABLED, value.timeLimitEnabled)
+            .putString(KEY_QUIZ_REVIEW_TIME, value.timeLimitText)
+            .putBoolean(KEY_QUIZ_REVIEW_INCLUDE_TIMING_XML, value.includeTimingInXml)
             .apply()
     }
 
@@ -215,6 +237,7 @@ class AppPreferences(context: Context) {
         timeLimitText = preferences.getString(KEY_CONTRAST_REVIEW_TIME, "30").orEmpty(),
         hintEnabled = preferences.getBoolean(KEY_CONTRAST_REVIEW_HINT, false),
         selectedQuizBankId = preferences.getString(KEY_CONTRAST_REVIEW_QUIZ_BANK, null),
+        includeTimingInXml = preferences.getBoolean(KEY_CONTRAST_REVIEW_INCLUDE_TIMING_XML, true),
     )
 
     fun saveContrastReviewPreferences(value: ContrastReviewPreferences) {
@@ -231,8 +254,53 @@ class AppPreferences(context: Context) {
             .putString(KEY_CONTRAST_REVIEW_TIME, value.timeLimitText)
             .putBoolean(KEY_CONTRAST_REVIEW_HINT, value.hintEnabled)
             .putString(KEY_CONTRAST_REVIEW_QUIZ_BANK, value.selectedQuizBankId)
+            .putBoolean(KEY_CONTRAST_REVIEW_INCLUDE_TIMING_XML, value.includeTimingInXml)
             .apply()
     }
+
+    fun readMixedReviewPreferences(): MixedReviewPreferences {
+        val enabledModes = preferences.getStringSet(
+            KEY_MIXED_REVIEW_ENABLED_MODES,
+            MixedReviewMode.entries.map(MixedReviewMode::name).toSet(),
+        ).orEmpty().mapNotNull { name ->
+            runCatching { MixedReviewMode.valueOf(name) }.getOrNull()
+        }.toSet().ifEmpty { MixedReviewMode.entries.toSet() }
+        val defaults = defaultMixedModePercentages()
+        val percentages = MixedReviewMode.entries.associateWith { mode ->
+            preferences.getInt(mixedModePercentageKey(mode), defaults.getValue(mode)).coerceIn(0, 100)
+        }
+        return MixedReviewPreferences(
+            selectedTags = preferences.getStringSet(KEY_MIXED_REVIEW_TAGS, emptySet()).orEmpty().toSet(),
+            questionCountText = preferences.getString(KEY_MIXED_REVIEW_QUESTION_COUNT, "50").orEmpty(),
+            enabledModes = enabledModes,
+            modePercentages = percentages,
+            difficulty = readEnum(KEY_MIXED_REVIEW_DIFFICULTY, PracticeDifficulty.EASY),
+            optionCountText = preferences.getString(KEY_MIXED_REVIEW_OPTION_COUNT, "4").orEmpty(),
+            timeLimitText = preferences.getString(KEY_MIXED_REVIEW_TIME_LIMIT, "30").orEmpty(),
+            includeTimingInXml = preferences.getBoolean(KEY_MIXED_REVIEW_INCLUDE_TIMING_XML, true),
+        )
+    }
+
+    fun saveMixedReviewPreferences(value: MixedReviewPreferences) {
+        val editor = preferences.edit()
+            .putStringSet(KEY_MIXED_REVIEW_TAGS, value.selectedTags)
+            .putString(KEY_MIXED_REVIEW_QUESTION_COUNT, value.questionCountText)
+            .putStringSet(KEY_MIXED_REVIEW_ENABLED_MODES, value.enabledModes.map(MixedReviewMode::name).toSet())
+            .putString(KEY_MIXED_REVIEW_DIFFICULTY, value.difficulty.name)
+            .putString(KEY_MIXED_REVIEW_OPTION_COUNT, value.optionCountText)
+            .putString(KEY_MIXED_REVIEW_TIME_LIMIT, value.timeLimitText)
+            .putBoolean(KEY_MIXED_REVIEW_INCLUDE_TIMING_XML, value.includeTimingInXml)
+        MixedReviewMode.entries.forEach { mode ->
+            editor.putInt(
+                mixedModePercentageKey(mode),
+                value.modePercentages[mode]?.coerceIn(0, 100) ?: 0,
+            )
+        }
+        editor.apply()
+    }
+
+    private fun mixedModePercentageKey(mode: MixedReviewMode): String =
+        "${KEY_MIXED_REVIEW_PERCENTAGE}_${mode.name.lowercase()}"
 
     private inline fun <reified T : Enum<T>> readEnum(key: String, fallback: T): T = runCatching {
         enumValueOf<T>(preferences.getString(key, fallback.name).orEmpty())
@@ -469,6 +537,8 @@ class AppPreferences(context: Context) {
         const val KEY_AI_API_KEY = "ai_api_key"
         const val KEY_AI_ANALYSIS_PROMPT = "ai_analysis_prompt"
         const val KEY_AI_BASE_URL = "ai_base_url"
+        const val KEY_AI_FILL_BLANK_EVALUATION_PROMPT = "ai_fill_blank_evaluation_prompt"
+        const val KEY_AI_MIXED_REVIEW_PROMPT = "ai_mixed_review_prompt"
         const val KEY_AI_MODEL = "ai_model"
         const val KEY_AI_PROVIDER = "ai_provider"
         const val KEY_AI_SYSTEM_PROMPT = "ai_system_prompt"
@@ -477,6 +547,7 @@ class AppPreferences(context: Context) {
         const val KEY_CONTRAST_PRESET = "contrast_practice_preset"
         const val KEY_CONTRAST_REVIEW_DIFFICULTY = "contrast_review_difficulty"
         const val KEY_CONTRAST_REVIEW_HINT = "contrast_review_hint"
+        const val KEY_CONTRAST_REVIEW_INCLUDE_TIMING_XML = "contrast_review_include_timing_xml"
         const val KEY_CONTRAST_REVIEW_OPTIONS = "contrast_review_options"
         const val KEY_CONTRAST_REVIEW_PROFICIENCY = "contrast_review_proficiency"
         const val KEY_CONTRAST_REVIEW_QUIZ_BANK = "contrast_review_quiz_bank"
@@ -496,6 +567,14 @@ class AppPreferences(context: Context) {
         const val KEY_EXPIRES_AT = "expires_at"
         const val KEY_MATCHING_REMINDER = "matching_reminder"
         const val KEY_MATCHING_TARGET = "matching_question_target"
+        const val KEY_MIXED_REVIEW_DIFFICULTY = "mixed_review_difficulty"
+        const val KEY_MIXED_REVIEW_ENABLED_MODES = "mixed_review_enabled_modes"
+        const val KEY_MIXED_REVIEW_INCLUDE_TIMING_XML = "mixed_review_include_timing_xml"
+        const val KEY_MIXED_REVIEW_OPTION_COUNT = "mixed_review_option_count"
+        const val KEY_MIXED_REVIEW_PERCENTAGE = "mixed_review_percentage"
+        const val KEY_MIXED_REVIEW_QUESTION_COUNT = "mixed_review_question_count"
+        const val KEY_MIXED_REVIEW_TAGS = "mixed_review_tags"
+        const val KEY_MIXED_REVIEW_TIME_LIMIT = "mixed_review_time_limit"
         const val KEY_MEMO_CONTRAST = "daily_memo_contrast"
         const val KEY_MEMO_CUSTOM_QUIZ = "daily_memo_custom_quiz"
         const val KEY_MEMO_DICTATION = "daily_memo_dictation"
@@ -509,7 +588,12 @@ class AppPreferences(context: Context) {
         const val KEY_QUIZ_REVIEW_MODE = "quiz_review_mode"
         const val KEY_QUIZ_REVIEW_RANDOM_COUNT = "quiz_review_random_count"
         const val KEY_QUIZ_REVIEW_RANDOM_OPTIONS = "quiz_review_random_options"
+        const val KEY_QUIZ_REVIEW_QUESTION_TYPE = "quiz_review_question_type"
+        const val KEY_QUIZ_REVIEW_IGNORE_CASE = "quiz_review_ignore_case"
+        const val KEY_QUIZ_REVIEW_INCLUDE_TIMING_XML = "quiz_review_include_timing_xml"
         const val KEY_QUIZ_REVIEW_START = "quiz_review_start"
+        const val KEY_QUIZ_REVIEW_TIME = "quiz_review_time"
+        const val KEY_QUIZ_REVIEW_TIME_ENABLED = "quiz_review_time_enabled"
         const val KEY_QUIZ_REVIEW_UNIFIED_SETTLEMENT = "quiz_review_unified_settlement"
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_REMINDER_HOUR = "reminder_hour"
