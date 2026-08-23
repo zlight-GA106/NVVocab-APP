@@ -419,7 +419,6 @@ private fun QuizReviewPanel(
     var ignoreFillBlankCase by remember { mutableStateOf(initialPreferences.ignoreFillBlankCase) }
     var timeLimitEnabled by remember { mutableStateOf(initialPreferences.timeLimitEnabled) }
     var timeLimitText by remember { mutableStateOf(initialPreferences.timeLimitText) }
-    var includeTimingInXml by remember { mutableStateOf(initialPreferences.includeTimingInXml) }
     var queue by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var currentIndex by remember { mutableStateOf(0) }
     var records by remember { mutableStateOf<List<QuizAnswerRecord>>(emptyList()) }
@@ -457,7 +456,6 @@ private fun QuizReviewPanel(
                 ignoreFillBlankCase = ignoreFillBlankCase,
                 timeLimitEnabled = timeLimitEnabled,
                 timeLimitText = timeLimitText,
-                includeTimingInXml = includeTimingInXml,
             ),
         )
     }
@@ -543,7 +541,7 @@ private fun QuizReviewPanel(
                         } else {
                             null
                         },
-                        includeTimingInXml = includeTimingInXml,
+                        includeTimingInXml = true,
                     ),
                 )
             }
@@ -749,23 +747,6 @@ private fun QuizReviewPanel(
                             onValueChange = { timeLimitText = it; persist() },
                             label = "单题限时秒数",
                         )
-                    }
-                    SelectionRow(
-                        onClick = {
-                            includeTimingInXml = !includeTimingInXml
-                            persist()
-                        },
-                        spacing = 10.dp,
-                    ) {
-                        Checkbox(checked = !includeTimingInXml, onCheckedChange = null)
-                        Column(Modifier.weight(1f)) {
-                            Text("不保存用时到本地 XML", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                "关闭遥测 XML 与错题 XML 中的每题有效用时字段。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
                     }
                     SelectionRow(
                         onClick = { onAdministratorModeChange(!administratorMode) },

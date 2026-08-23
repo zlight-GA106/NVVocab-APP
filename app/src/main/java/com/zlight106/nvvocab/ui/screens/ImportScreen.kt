@@ -1,5 +1,14 @@
 package com.zlight106.nvvocab.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +32,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.zlight106.nvvocab.data.ParaphraseSeed
@@ -46,9 +59,48 @@ fun ImportScreen(
     var seedTargetText by remember { mutableStateOf("") }
     var seedContextText by remember { mutableStateOf("") }
     var seedSourceReference by remember { mutableStateOf("") }
-    var seedNotes by remember { mutableStateOf("") }
+    var seedBatchDefaultSource by remember { mutableStateOf("") }
+    var seedMoreInfoExpanded by remember { mutableStateOf(false) }
     var seedBatchText by remember { mutableStateOf("") }
+    val seedSourceFocusRequester = remember { FocusRequester() }
     val parsed = remember(text.text) { WordTextParser.parse(text.text) }
+    val moreInfoArrowRotation by animateFloatAsState(
+        targetValue = if (seedMoreInfoExpanded) 180f else 0f,
+        label = "seed-more-info-arrow",
+    )
+
+    fun clearSeedEditor() {
+        editingSeedId = null
+        seedSourceText = ""
+        seedTargetText = ""
+        seedContextText = ""
+        seedSourceReference = ""
+        seedMoreInfoExpanded = false
+    }
+
+    fun submitSeed() {
+        if (seedSourceText.isBlank() || seedTargetText.isBlank()) return
+        val currentEditingId = editingSeedId
+        val sourceReference = if (currentEditingId == null) {
+            seedSourceReference.ifBlank { seedBatchDefaultSource }
+        } else {
+            seedSourceReference
+        }
+        val legacyNotes = currentEditingId?.let { id ->
+            paraphraseSeeds.firstOrNull { seed -> seed.id == id }?.notes
+        }
+        viewModel.saveParaphraseSeed(
+            id = currentEditingId,
+            sourceText = seedSourceText,
+            targetText = seedTargetText,
+            contextText = seedContextText,
+            sourceReference = sourceReference,
+            notes = legacyNotes,
+        ) {
+            clearSeedEditor()
+            seedSourceFocusRequester.requestFocus()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth().verticalScroll(remember { ScrollState(0) }).padding(16.dp),
@@ -115,40 +167,73 @@ fun ImportScreen(
                 OutlinedTextField(
                     value = seedSourceText,
                     onValueChange = { seedSourceText = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("原表达") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(seedSourceFocusRequester),
+                    label = { Text("原表达（必填）") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    singleLine = true,
                     shape = MaterialTheme.shapes.large,
                 )
                 OutlinedTextField(
                     value = seedTargetText,
                     onValueChange = { seedTargetText = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("等效表达") },
+                    label = { Text("等效表达（必填）") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submitSeed() }),
+                    singleLine = true,
                     shape = MaterialTheme.shapes.large,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = seedContextText,
-                        onValueChange = { seedContextText = it },
-                        modifier = Modifier.weight(1f),
-                        label = { Text("上下文") },
-                        shape = MaterialTheme.shapes.large,
-                    )
-                    OutlinedTextField(
-                        value = seedSourceReference,
-                        onValueChange = { seedSourceReference = it },
-                        modifier = Modifier.weight(1f),
-                        label = { Text("来源") },
-                        shape = MaterialTheme.shapes.large,
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { seedMoreInfoExpanded = !seedMoreInfoExpanded }
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("更多信息", style = MaterialTheme.typography.titleSmall)
+                    Icon(
+                        imageVector = NvvIcons.ChevronDown,
+                        contentDescription = if (seedMoreInfoExpanded) "收起更多信息" else "展开更多信息",
+                        modifier = Modifier.graphicsLayer { rotationZ = moreInfoArrowRotation },
                     )
                 }
-                OutlinedTextField(
-                    value = seedNotes,
-                    onValueChange = { seedNotes = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("备注") },
-                    shape = MaterialTheme.shapes.large,
-                )
+                AnimatedVisibility(
+                    visible = seedMoreInfoExpanded,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        OutlinedTextField(
+                            value = seedContextText,
+                            onValueChange = { seedContextText = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("上下文（可选）") },
+                            shape = MaterialTheme.shapes.large,
+                        )
+                        OutlinedTextField(
+                            value = seedSourceReference,
+                            onValueChange = { seedSourceReference = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("来源（可选）") },
+                            supportingText = {
+                                if (editingSeedId == null) Text("留空时继承当前批次默认来源")
+                            },
+                            shape = MaterialTheme.shapes.large,
+                        )
+                        OutlinedTextField(
+                            value = seedBatchDefaultSource,
+                            onValueChange = { seedBatchDefaultSource = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("当前批次默认来源（可选）") },
+                            supportingText = { Text("连续录入和批量导入时自动继承") },
+                            singleLine = true,
+                            shape = MaterialTheme.shapes.large,
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -156,37 +241,14 @@ fun ImportScreen(
                 ) {
                     if (editingSeedId != null) {
                         OutlinedButton(
-                            onClick = {
-                                editingSeedId = null
-                                seedSourceText = ""
-                                seedTargetText = ""
-                                seedContextText = ""
-                                seedSourceReference = ""
-                                seedNotes = ""
-                            },
+                            onClick = ::clearSeedEditor,
                             shape = CircleShape,
                         ) {
                             Text("取消编辑")
                         }
                     }
                     Button(
-                        onClick = {
-                            viewModel.saveParaphraseSeed(
-                                id = editingSeedId,
-                                sourceText = seedSourceText,
-                                targetText = seedTargetText,
-                                contextText = seedContextText,
-                                sourceReference = seedSourceReference,
-                                notes = seedNotes,
-                            ) {
-                                editingSeedId = null
-                                seedSourceText = ""
-                                seedTargetText = ""
-                                seedContextText = ""
-                                seedSourceReference = ""
-                                seedNotes = ""
-                            }
-                        },
+                        onClick = ::submitSeed,
                         enabled = seedSourceText.isNotBlank() && seedTargetText.isNotBlank(),
                         modifier = Modifier.padding(start = 8.dp),
                         shape = CircleShape,
@@ -200,12 +262,20 @@ fun ImportScreen(
                     onValueChange = { seedBatchText = it },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
                     label = { Text("批量导入") },
-                    placeholder = { Text("原表达 => 等效表达 | 上下文 | 来源 | 备注") },
+                    placeholder = { Text("原表达 => 等效表达 | 上下文 | 来源") },
                     shape = MaterialTheme.shapes.extraLarge,
+                )
+                Text(
+                    "每行一条。上下文与来源可省略；只填写来源时使用：原表达 => 等效表达 | | 来源",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
                     onClick = {
-                        viewModel.importParaphraseSeedText(seedBatchText) { count ->
+                        viewModel.importParaphraseSeedText(
+                            text = seedBatchText,
+                            defaultSourceReference = seedBatchDefaultSource,
+                        ) { count ->
                             if (count > 0) seedBatchText = ""
                         }
                     },
@@ -234,7 +304,6 @@ fun ImportScreen(
                                 listOfNotNull(
                                     seed.contextText?.takeIf(String::isNotBlank)?.let { "上下文：$it" },
                                     seed.sourceReference?.takeIf(String::isNotBlank)?.let { "来源：$it" },
-                                    seed.notes?.takeIf(String::isNotBlank)?.let { "备注：$it" },
                                 ).forEach { metadata ->
                                     Text(
                                         metadata,
@@ -253,7 +322,8 @@ fun ImportScreen(
                                             seedTargetText = seed.targetText
                                             seedContextText = seed.contextText.orEmpty()
                                             seedSourceReference = seed.sourceReference.orEmpty()
-                                            seedNotes = seed.notes.orEmpty()
+                                            seedMoreInfoExpanded = seed.contextText?.isNotBlank() == true ||
+                                                seed.sourceReference?.isNotBlank() == true
                                         },
                                         shape = CircleShape,
                                     ) {

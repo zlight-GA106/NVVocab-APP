@@ -91,7 +91,7 @@ fun ContrastPracticePanel(
     var optionCountText by remember { mutableStateOf(savedPreferences.optionCountText) }
     var questionCountText by remember { mutableStateOf(savedPreferences.questionCountText) }
     var timeLimitText by remember { mutableStateOf(savedPreferences.timeLimitText) }
-    var includeTimingInXml by remember { mutableStateOf(savedPreferences.includeTimingInXml) }
+    var saveGeneratedBank by remember { mutableStateOf(savedPreferences.saveGeneratedBank) }
     var selectedQuizBankId by remember { mutableStateOf(savedPreferences.selectedQuizBankId) }
     var showWordPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
@@ -119,7 +119,7 @@ fun ContrastPracticePanel(
                 timeLimitText = timeLimitText,
                 hintEnabled = false,
                 selectedQuizBankId = selectedQuizBankId,
-                includeTimingInXml = includeTimingInXml,
+                saveGeneratedBank = saveGeneratedBank,
             ),
         )
     }
@@ -206,7 +206,7 @@ fun ContrastPracticePanel(
                         difficulty = difficulty,
                         timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300) ?: 30,
                         hintEnabled = false,
-                        includeTimingInXml = includeTimingInXml,
+                        includeTimingInXml = true,
                     ),
                 )
             }
@@ -223,6 +223,7 @@ fun ContrastPracticePanel(
             type = type,
             optionCount = optionCount,
             difficulty = difficulty,
+            persistGeneratedBank = saveGeneratedBank,
         ) { result ->
             generating = false
             result.onSuccess { generated ->
@@ -241,7 +242,7 @@ fun ContrastPracticePanel(
                             difficulty = difficulty,
                             timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300) ?: 30,
                             hintEnabled = false,
-                            includeTimingInXml = includeTimingInXml,
+                            includeTimingInXml = true,
                         ),
                     )
                 }
@@ -272,7 +273,7 @@ fun ContrastPracticePanel(
                     PracticeSessionRequest.Quiz(
                         queue = prepared,
                         timeLimitSeconds = timeLimitText.toIntOrNull()?.coerceIn(5, 300),
-                        includeTimingInXml = includeTimingInXml,
+                        includeTimingInXml = true,
                     ),
                 )
             }
@@ -439,23 +440,25 @@ fun ContrastPracticePanel(
                         },
                     )
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            includeTimingInXml = !includeTimingInXml
-                            persist()
-                        },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Checkbox(checked = !includeTimingInXml, onCheckedChange = null)
-                    Column(Modifier.padding(start = 8.dp)) {
-                        Text("不保存用时到本地 XML")
-                        Text(
-                            "关闭遥测 XML 与错题 XML 中的每题有效用时字段。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                if (type != ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH && selectedQuizBankId == null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                saveGeneratedBank = !saveGeneratedBank
+                                persist()
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = !saveGeneratedBank, onCheckedChange = null)
+                        Column(Modifier.padding(start = 8.dp)) {
+                            Text("不保存本次生成的题库到本地 XML")
+                            Text(
+                                "本次 AI 生成题只用于当前练习，不写入本地题库。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
                 val optionCount = optionCountText.toIntOrNull() ?: 0

@@ -290,12 +290,20 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         }
     }
 
-    fun importParaphraseSeedText(text: String, onComplete: (Int) -> Unit = {}) {
+    fun importParaphraseSeedText(
+        text: String,
+        defaultSourceReference: String? = null,
+        onComplete: (Int) -> Unit = {},
+    ) {
         viewModelScope.launch {
             runCatching {
-                val entries = ParaphraseSeedBatchParser.parse(text, uiState.value.session?.userId)
+                val entries = ParaphraseSeedBatchParser.parse(
+                    text = text,
+                    userId = uiState.value.session?.userId,
+                    defaultSourceReference = defaultSourceReference,
+                )
                 require(entries.isNotEmpty()) {
-                    "未解析到有效种子，请使用 原表达 => 等效表达 | 上下文 | 来源 | 备注"
+                    "未解析到有效种子，请使用 原表达 => 等效表达 | 上下文 | 来源"
                 }
                 repository.importParaphraseSeeds(entries)
             }.onSuccess { count ->
@@ -368,6 +376,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         type: ContrastPracticeType,
         optionCount: Int,
         difficulty: PracticeDifficulty,
+        persistGeneratedBank: Boolean,
         onComplete: (Result<List<ContrastQuestion>>) -> Unit,
     ) {
         mutableContrastGenerationProgress.value = 0f
@@ -379,6 +388,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
                     type = type,
                     optionCount = optionCount,
                     difficulty = difficulty,
+                    persistGeneratedBank = persistGeneratedBank,
                     onProgress = { progress -> mutableContrastGenerationProgress.value = progress },
                 )
             }
@@ -421,6 +431,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         paraphraseSeeds: List<ParaphraseSeed>,
         optionCount: Int,
         difficulty: PracticeDifficulty,
+        persistGeneratedBanks: Boolean,
         onComplete: (Result<List<MixedReviewItem>>) -> Unit,
     ) {
         mutableMixedGenerationProgress.value = 0f
@@ -450,6 +461,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
                             optionCount = optionCount,
                             difficulty = difficulty,
                             useMixedReviewPrompt = true,
+                            persistGeneratedBank = persistGeneratedBanks,
                             onProgress = { partial ->
                                 mutableMixedGenerationProgress.value = (
                                     completedChoices + modeAssignments.size * partial

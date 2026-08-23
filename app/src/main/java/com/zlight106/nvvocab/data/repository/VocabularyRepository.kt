@@ -461,6 +461,7 @@ class VocabularyRepository(
         optionCount: Int,
         difficulty: PracticeDifficulty,
         useMixedReviewPrompt: Boolean = false,
+        persistGeneratedBank: Boolean = true,
         onProgress: (Float) -> Unit,
     ): List<ContrastQuestion> = withContext(Dispatchers.IO) {
         val storedSettings = preferences.readAiSettings()
@@ -477,31 +478,33 @@ class VocabularyRepository(
             difficulty = difficulty,
             onProgress = onProgress,
         )
-        val now = System.currentTimeMillis()
-        val bankName = "AI 对照练习 ${AI_BANK_TIME_FORMAT.format(Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()))}-${now % 1_000}"
-        val parsedQuestions = generated.mapIndexed { index, question ->
-            val options = question.options.mapIndexed { optionIndex, option ->
-                QuizOption(id = ('A'.code + optionIndex).toChar().toString(), text = option)
+        if (persistGeneratedBank) {
+            val now = System.currentTimeMillis()
+            val bankName = "AI 对照练习 ${AI_BANK_TIME_FORMAT.format(Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()))}-${now % 1_000}"
+            val parsedQuestions = generated.mapIndexed { index, question ->
+                val options = question.options.mapIndexed { optionIndex, option ->
+                    QuizOption(id = ('A'.code + optionIndex).toChar().toString(), text = option)
+                }
+                val answer = options.getOrNull(question.correctIndex)?.id
+                    ?: error("AI 题目的正确答案索引无效。")
+                ParsedQuizQuestion(
+                    originalIndex = index,
+                    score = 10,
+                    text = question.prompt,
+                    options = options,
+                    answers = setOf(answer),
+                )
             }
-            val answer = options.getOrNull(question.correctIndex)?.id
-                ?: error("AI 题目的正确答案索引无效。")
-            ParsedQuizQuestion(
-                originalIndex = index,
-                score = 10,
-                text = question.prompt,
-                options = options,
-                answers = setOf(answer),
+            database.replaceQuizBank(
+                parsedBank = ParsedQuizBank(name = bankName, password = null, questions = parsedQuestions),
+                userId = preferences.readSession()?.userId,
+                source = QuizSource.AI,
+                practiceType = type,
+                difficulty = difficulty,
             )
+            mutableQuizBanks.value = database.getQuizBanks()
+            onLocalDataChanged()
         }
-        database.replaceQuizBank(
-            parsedBank = ParsedQuizBank(name = bankName, password = null, questions = parsedQuestions),
-            userId = preferences.readSession()?.userId,
-            source = QuizSource.AI,
-            practiceType = type,
-            difficulty = difficulty,
-        )
-        mutableQuizBanks.value = database.getQuizBanks()
-        onLocalDataChanged()
         generated
     }
 

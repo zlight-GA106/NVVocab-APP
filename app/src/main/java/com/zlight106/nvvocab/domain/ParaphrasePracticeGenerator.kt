@@ -36,7 +36,12 @@ object ParaphrasePracticeGenerator {
 }
 
 object ParaphraseSeedBatchParser {
-    fun parse(text: String, userId: String? = null, now: Long = System.currentTimeMillis()): List<ParaphraseSeed> =
+    fun parse(
+        text: String,
+        userId: String? = null,
+        defaultSourceReference: String? = null,
+        now: Long = System.currentTimeMillis(),
+    ): List<ParaphraseSeed> =
         text.lineSequence().mapIndexedNotNull { index, rawLine ->
             val line = rawLine.trim()
             if (line.isBlank()) return@mapIndexedNotNull null
@@ -49,8 +54,9 @@ object ParaphraseSeedBatchParser {
                 sourceText = pair[0],
                 targetText = pair[1],
                 contextText = sections.getOrNull(1)?.takeIf(String::isNotBlank),
-                sourceReference = sections.getOrNull(2)?.takeIf(String::isNotBlank),
-                notes = sections.getOrNull(3)?.takeIf(String::isNotBlank),
+                sourceReference = sections.getOrNull(2)?.takeIf(String::isNotBlank)
+                    ?: defaultSourceReference?.trim()?.takeIf(String::isNotBlank),
+                notes = null,
                 createdAt = now + index,
                 updatedAt = now + index,
                 dirty = true,

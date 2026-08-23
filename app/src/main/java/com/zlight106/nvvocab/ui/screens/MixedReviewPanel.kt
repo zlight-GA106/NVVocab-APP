@@ -72,7 +72,7 @@ fun MixedReviewPanel(
     val difficulty = initialPreferences.difficulty
     var optionCountText by remember { mutableStateOf(initialPreferences.optionCountText) }
     var timeLimitText by remember { mutableStateOf(initialPreferences.timeLimitText) }
-    var includeTimingInXml by remember { mutableStateOf(initialPreferences.includeTimingInXml) }
+    var saveGeneratedBank by remember { mutableStateOf(initialPreferences.saveGeneratedBank) }
     var generating by remember { mutableStateOf(false) }
     var validationMessage by remember { mutableStateOf<String?>(null) }
 
@@ -106,7 +106,7 @@ fun MixedReviewPanel(
         percentages,
         optionCountText,
         timeLimitText,
-        includeTimingInXml,
+        saveGeneratedBank,
     ) {
         viewModel.saveMixedReviewPreferences(
             MixedReviewPreferences(
@@ -117,7 +117,7 @@ fun MixedReviewPanel(
                 difficulty = difficulty,
                 optionCountText = optionCountText,
                 timeLimitText = timeLimitText,
-                includeTimingInXml = includeTimingInXml,
+                saveGeneratedBank = saveGeneratedBank,
             ),
         )
     }
@@ -144,6 +144,7 @@ fun MixedReviewPanel(
             paraphraseSeeds = scopedParaphraseSeeds,
             optionCount = optionCount,
             difficulty = difficulty,
+            persistGeneratedBanks = saveGeneratedBank,
         ) { result ->
             generating = false
             result.onSuccess { queue ->
@@ -152,7 +153,7 @@ fun MixedReviewPanel(
                         queue = queue,
                         difficulty = difficulty,
                         timeLimitSeconds = timeLimit,
-                        includeTimingInXml = includeTimingInXml,
+                        includeTimingInXml = true,
                     ),
                 )
             }.onFailure { error ->
@@ -295,20 +296,25 @@ fun MixedReviewPanel(
                         shape = MaterialTheme.shapes.large,
                     )
                 }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { includeTimingInXml = !includeTimingInXml },
-                    verticalAlignment = Alignment.CenterVertically,
+                if (
+                    MixedReviewMode.CHINESE_TO_ENGLISH in enabledModes ||
+                    MixedReviewMode.ENGLISH_TO_CHINESE in enabledModes
                 ) {
-                    Checkbox(checked = !includeTimingInXml, onCheckedChange = null)
-                    Column(Modifier.padding(start = 8.dp)) {
-                        Text("不保存用时到本地 XML")
-                        Text(
-                            "关闭遥测 XML 与错题 XML 中的每题有效用时字段。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { saveGeneratedBank = !saveGeneratedBank },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = !saveGeneratedBank, onCheckedChange = null)
+                        Column(Modifier.padding(start = 8.dp)) {
+                            Text("不保存本次生成的题库到本地 XML")
+                            Text(
+                                "本次 AI 生成题只用于当前练习，不写入本地题库。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
 

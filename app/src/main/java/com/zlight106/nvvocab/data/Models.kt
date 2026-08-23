@@ -590,7 +590,6 @@ data class QuizReviewPreferences(
     val ignoreFillBlankCase: Boolean = true,
     val timeLimitEnabled: Boolean = false,
     val timeLimitText: String = "30",
-    val includeTimingInXml: Boolean = true,
 )
 
 data class ContrastReviewPreferences(
@@ -606,7 +605,7 @@ data class ContrastReviewPreferences(
     val timeLimitText: String = "30",
     val hintEnabled: Boolean = false,
     val selectedQuizBankId: String? = null,
-    val includeTimingInXml: Boolean = true,
+    val saveGeneratedBank: Boolean = true,
 )
 
 enum class MixedReviewMode {
@@ -631,7 +630,7 @@ data class MixedReviewPreferences(
     val difficulty: PracticeDifficulty = PracticeDifficulty.EASY,
     val optionCountText: String = "4",
     val timeLimitText: String = "30",
-    val includeTimingInXml: Boolean = true,
+    val saveGeneratedBank: Boolean = true,
 )
 
 data class MixedReviewItem(
