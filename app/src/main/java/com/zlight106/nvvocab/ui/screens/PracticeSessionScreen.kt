@@ -62,6 +62,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -88,6 +89,8 @@ import com.zlight106.nvvocab.data.formatOptionAnswers
 import com.zlight106.nvvocab.ui.MainViewModel
 import com.zlight106.nvvocab.ui.components.QuestionOptionDetails
 import com.zlight106.nvvocab.ui.components.SectionCard
+import com.zlight106.nvvocab.ui.components.WebPronunciationHost
+import com.zlight106.nvvocab.ui.components.rememberWebPronunciationPlayer
 import com.zlight106.nvvocab.ui.icons.NvvIcons
 import com.zlight106.nvvocab.domain.AttemptAnalytics
 import com.zlight106.nvvocab.domain.AttemptModeTimeSummary
@@ -230,21 +233,38 @@ fun PracticeSessionScreen(
     val optionSpeechEnabled by viewModel.optionSpeechEnabled.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var ttsReady by remember { mutableStateOf(false) }
+    var ttsInitializationStatus by remember { mutableStateOf<Int?>(null) }
     val tts = remember(context) {
         TextToSpeech(context.applicationContext) { status ->
-            ttsReady = status == TextToSpeech.SUCCESS
+            ttsInitializationStatus = status
         }
     }
-    DisposableEffect(tts, ttsReady) {
-        if (ttsReady) tts.language = Locale.US
-        onDispose { if (ttsReady) tts.stop() }
+    LaunchedEffect(ttsInitializationStatus, tts) {
+        if (ttsInitializationStatus == TextToSpeech.SUCCESS) {
+            val languageResult = tts.setLanguage(Locale.US)
+            tts.setSpeechRate(0.9f)
+            ttsReady = languageResult >= TextToSpeech.LANG_AVAILABLE
+        } else if (ttsInitializationStatus != null) {
+            ttsReady = false
+        }
     }
-    DisposableEffect(tts) { onDispose { tts.shutdown() } }
+    val pronunciationPlayer = rememberWebPronunciationPlayer { word ->
+        if (ttsReady) {
+            tts.speak(word, TextToSpeech.QUEUE_FLUSH, null, "fallback-$word")
+        } else {
+            viewModel.notifyUser("暂时无法获取在线发音，请检查网络后重试")
+        }
+    }
+    DisposableEffect(tts) {
+        onDispose {
+            tts.stop()
+            tts.shutdown()
+        }
+    }
     val speakOption: (String) -> Unit = { option ->
-        if (optionSpeechEnabled && ttsReady) {
-            tts.speak(option, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
-        }
+        if (optionSpeechEnabled) pronunciationPlayer.speak(option)
     }
+    val speakWord: (String) -> Unit = pronunciationPlayer::speak
     val lifecycleOwner = LocalLifecycleOwner.current
 
     DisposableEffect(lifecycleOwner, settled) {
@@ -304,11 +324,13 @@ fun PracticeSessionScreen(
                 .padding(padding)
                 .imePadding(),
         ) {
+            WebPronunciationHost(pronunciationPlayer)
             when (request) {
                 is PracticeSessionRequest.Words -> WordSession(
                     request = request,
                     runtime = sessionRuntime,
                     viewModel = viewModel,
+                    onSpeakWord = speakWord,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -353,6 +375,7 @@ fun PracticeSessionScreen(
                     runtime = sessionRuntime,
                     viewModel = viewModel,
                     showAnswers = administratorMode,
+                    onSpeakWord = speakWord,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -361,34 +384,43 @@ fun PracticeSessionScreen(
     }
 
     if (showExitDialog) {
-        AlertDialog(
-            onDismissRequest = { showExitDialog = false },
-            icon = { Icon(NvvIcons.AlertCircle, null) },
-            title = { Text("退出当前练习？") },
-            text = { Text("可以保留本轮进度，或只结算已提交的题目。") },
-            dismissButton = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { showExitDialog = false }, shape = CircleShape) {
-                        Text("继续练习")
-                    }
-                    OutlinedButton(onClick = {
-                        showExitDialog = false
-                        viewModel.pausePracticeSession(onPause)
-                    }, shape = CircleShape) {
-                        Text("暂停答题")
-                    }
+        Dialog(onDismissRequest = { showExitDialog = false }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().widthIn(max = 440.dp),
+                shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(NvvIcons.AlertCircle, null, tint = MaterialTheme.colorScheme.primary)
+                    Text("退出当前练习？", style = MaterialTheme.typography.headlineSmall)
+                    Text("可以保留本轮进度，或只结算已提交的题目。")
+                    OutlinedButton(
+                        onClick = { showExitDialog = false },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = CircleShape,
+                    ) { Text("继续练习") }
+                    OutlinedButton(
+                        onClick = {
+                            showExitDialog = false
+                            viewModel.pausePracticeSession(onPause)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = CircleShape,
+                    ) { Text("暂停答题") }
+                    Button(
+                        onClick = {
+                            showExitDialog = false
+                            interruptAndSettle(request, sessionRuntime, viewModel)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = CircleShape,
+                    ) { Text("打断并结算") }
                 }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    showExitDialog = false
-                    interruptAndSettle(request, sessionRuntime, viewModel)
-                }, shape = CircleShape) {
-                    Text("打断并结算")
-                }
-            },
-            shape = MaterialTheme.shapes.extraLarge,
-        )
+            }
+        }
     }
 }
 
@@ -477,11 +509,17 @@ private fun WordSession(
     request: PracticeSessionRequest.Words,
     runtime: PracticeSessionRuntime,
     viewModel: MainViewModel,
+    onSpeakWord: (String) -> Unit,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
     var settling by remember(request) { mutableStateOf(false) }
     val currentIndex = runtime.currentIndex.coerceIn(0, request.queue.lastIndex.coerceAtLeast(0))
+    val telemetryExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/xml"),
+    ) { uri ->
+        uri?.let { viewModel.exportSessionTelemetry(runtime.sessionId, runtime.attempts, it, true) }
+    }
 
     LaunchedEffect(runtime.sessionId, currentIndex, runtime.finished) {
         if (!runtime.finished) viewModel.beginQuestionTiming(runtime.sessionId, currentIndex)
@@ -506,6 +544,7 @@ private fun WordSession(
                 enabled = !settling,
                 canGoPrevious = currentIndex > 0,
                 onPrevious = { viewModel.setPracticeSessionIndex(currentIndex - 1) },
+                onSpeakWord = { onSpeakWord(request.queue[currentIndex].spelling) },
                 onComplete = { outcome ->
                     val currentWord = request.queue[currentIndex]
                     val previous = runtime.attempts.firstOrNull { it.sequenceIndex == currentIndex }
@@ -569,6 +608,16 @@ private fun WordSession(
                     }
                 },
             )
+            if (request.mode == DictationMode.REVIEW) {
+                OutlinedButton(
+                    onClick = { telemetryExportLauncher.launch("nvvocab-telemetry-${runtime.sessionId}.xml") },
+                    enabled = runtime.attempts.isNotEmpty(),
+                    shape = CircleShape,
+                ) {
+                    Icon(NvvIcons.Download, null)
+                    Text("导出已完成题目的遥测", Modifier.padding(start = 8.dp))
+                }
+            }
             if (settling) {
                 LinearProgressIndicator(
                     modifier = Modifier.fillMaxWidth(),
@@ -589,6 +638,7 @@ private fun WordQuestion(
     enabled: Boolean,
     canGoPrevious: Boolean,
     onPrevious: () -> Unit,
+    onSpeakWord: () -> Unit,
     onComplete: (WordAnswerOutcome) -> Unit,
 ) {
     var answer by rememberSaveable(word.id) { mutableStateOf("") }
@@ -627,7 +677,18 @@ private fun WordQuestion(
             if (mode == DictationMode.PRACTICE) {
                 Text(word.spelling, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.SemiBold)
             }
-            Text(word.translation, style = MaterialTheme.typography.headlineSmall)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(word.translation, modifier = Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                if (mode == DictationMode.REVIEW) {
+                    IconButton(onClick = onSpeakWord, enabled = enabled) {
+                        Icon(NvvIcons.Volume2, contentDescription = "播放单词发音")
+                    }
+                }
+            }
             word.phonetic?.let { Text("[$it]", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             if (hinted) Text("首字母：${word.spelling.firstOrNull()?.uppercaseChar() ?: ""}")
             OutlinedTextField(
@@ -1484,6 +1545,7 @@ private fun MixedSession(
     runtime: PracticeSessionRuntime,
     viewModel: MainViewModel,
     showAnswers: Boolean,
+    onSpeakWord: (String) -> Unit,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -1564,6 +1626,7 @@ private fun MixedSession(
                     enabled = !settling,
                     canGoPrevious = currentIndex > 0,
                     onPrevious = { viewModel.setPracticeSessionIndex(currentIndex - 1) },
+                    onSpeakWord = { onSpeakWord(word.spelling) },
                     onComplete = { outcome ->
                         val previous = runtime.attempts.firstOrNull { it.sequenceIndex == currentIndex }
                         completeCurrent(

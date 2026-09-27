@@ -5,6 +5,8 @@ import com.zlight106.nvvocab.data.PracticeAttempt
 import com.zlight106.nvvocab.domain.SessionTelemetryXmlWriter
 import java.io.File
 import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import org.json.JSONObject
@@ -37,6 +39,7 @@ class TelemetryArchive(context: Context) {
             }.getOrNull()
         }.sortedByDescending(TelemetryArchiveEntry::createdAt)
 
+    @Synchronized
     fun save(
         sessionId: String,
         attempts: List<PracticeAttempt>,
@@ -48,10 +51,8 @@ class TelemetryArchive(context: Context) {
         val xml = xmlFile(sessionId)
         val temporary = File(directory, "$sessionId.tmp")
         try {
-            if (!xml.isFile) {
-                temporary.outputStream().use { SessionTelemetryXmlWriter.write(sessionId, attempts, it, includeTiming) }
-                check(temporary.renameTo(xml)) { "无法保存遥测文件" }
-            }
+            temporary.outputStream().use { SessionTelemetryXmlWriter.write(sessionId, attempts, it, includeTiming) }
+            Files.move(temporary.toPath(), xml.toPath(), StandardCopyOption.REPLACE_EXISTING)
             File(directory, "$sessionId.json").writeText(
                 JSONObject().put("sessionId", sessionId)
                     .put("createdAt", System.currentTimeMillis())

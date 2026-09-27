@@ -13,15 +13,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,6 +42,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.window.Dialog
 import com.zlight106.nvvocab.ui.icons.NvvIcons
 
 @Composable
@@ -83,8 +87,7 @@ fun <T> NvvDropdown(
     val selectedLabel = options.firstOrNull { it.first == value }?.second.orEmpty()
     Column(modifier) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Box {
-            Surface(
+        Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer {
@@ -127,19 +130,85 @@ fun <T> NvvDropdown(
                         modifier = if (compact) Modifier.size(18.dp) else Modifier,
                     )
                 }
-            }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                options.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option.second) },
-                        leadingIcon = if (option.first == value) {
-                            { Icon(NvvIcons.Check, null, tint = MaterialTheme.colorScheme.primary) }
-                        } else null,
-                        onClick = {
-                            onChange(option.first)
-                            expanded = false
-                        },
-                    )
+        }
+    }
+    if (expanded) {
+        var search by remember { mutableStateOf("") }
+        val visibleOptions = options.filter { it.second.contains(search.trim(), ignoreCase = true) }
+        Dialog(onDismissRequest = { expanded = false }) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                        IconButton(onClick = { expanded = false }) {
+                            Icon(NvvIcons.X, contentDescription = "关闭选择器")
+                        }
+                    }
+                    if (options.size > 8) {
+                        OutlinedTextField(
+                            value = search,
+                            onValueChange = { search = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            label = { Text("搜索$label") },
+                            leadingIcon = { Icon(NvvIcons.Search, null) },
+                            shape = RoundedCornerShape(18.dp),
+                        )
+                    }
+                    if (visibleOptions.isEmpty()) {
+                        Text("没有匹配的选项", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth()
+                                .height((visibleOptions.size.coerceAtMost(6) * 68 + 8).dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            itemsIndexed(visibleOptions) { _, option ->
+                                val selected = option.first == value
+                                Surface(
+                                    onClick = {
+                                        onChange(option.first)
+                                        expanded = false
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.surface,
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (selected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.outlineVariant,
+                                    ),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    ) {
+                                        Text(
+                                            option.second,
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (selected) Icon(NvvIcons.Check, contentDescription = "已选择")
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

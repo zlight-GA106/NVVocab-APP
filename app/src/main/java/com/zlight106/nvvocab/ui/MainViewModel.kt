@@ -765,6 +765,21 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
                 application.contentResolver.openOutputStream(uri, "w")?.use { output ->
                     repository.exportSessionTelemetry(sessionId, attempts, output, includeTiming)
                 } ?: error("无法写入所选文件")
+                val runtime = mutablePracticeSessionRuntime.value?.takeIf { it.sessionId == sessionId }
+                val request = mutableActivePracticeSession.value
+                if (runtime != null && request != null && attempts.isNotEmpty()) {
+                    val category = request.titleForArchive()
+                    val sourceName = when (request) {
+                        is PracticeSessionRequest.Quiz -> repository.quizBanks.value
+                            .firstOrNull { it.id == request.queue.firstOrNull()?.bankId }?.name ?: "题库"
+                        is PracticeSessionRequest.WrongBook -> "错题本"
+                        else -> attempts.firstOrNull()?.sourceId.orEmpty().ifBlank { category }
+                    }
+                    withContext(Dispatchers.IO) {
+                        telemetryArchive.save(sessionId, attempts, includeTiming, category, sourceName)
+                    }
+                    mutableTelemetryEntries.value = telemetryArchive.list()
+                }
             }.onSuccess {
                 showMessage("遥测数据 XML 已导出")
             }.onFailure {
