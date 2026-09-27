@@ -29,6 +29,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -95,8 +96,12 @@ fun DictateScreen(
     administratorMode: Boolean,
     onAdministratorModeChange: (Boolean) -> Unit,
     onStartSession: (PracticeSessionRequest) -> Unit,
+    onResumeSession: () -> Unit,
 ) {
     val appState by viewModel.uiState.collectAsStateWithLifecycle()
+    val optionSpeechEnabled by viewModel.optionSpeechEnabled.collectAsStateWithLifecycle()
+    val activeSession by viewModel.activePracticeSession.collectAsStateWithLifecycle()
+    val activeRuntime by viewModel.practiceSessionRuntime.collectAsStateWithLifecycle()
     val category = appState.reviewCategory
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -109,6 +114,16 @@ fun DictateScreen(
             "在单词拼写、本地题库与 AI 对照练习之间切换。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (activeSession != null && activeRuntime?.finished == false) {
+            Button(onClick = onResumeSession, modifier = Modifier.fillMaxWidth(), shape = CircleShape) {
+                Icon(NvvIcons.Play, null)
+                Text("继续暂停的答题（第 ${(activeRuntime?.currentIndex ?: 0) + 1} 题）", Modifier.padding(start = 8.dp))
+            }
+        }
+        SelectionRow(onClick = { viewModel.setOptionSpeechEnabled(!optionSpeechEnabled) }) {
+            Checkbox(checked = optionSpeechEnabled, onCheckedChange = null)
+            Text("点击选项自动播放 TTS", Modifier.padding(start = 8.dp))
+        }
         ReviewCategorySelector(category, onChange = viewModel::setReviewCategory)
         AnimatedContent(
             targetState = category,
@@ -425,6 +440,8 @@ private fun QuizReviewPanel(
     var started by remember { mutableStateOf(false) }
     var finished by remember { mutableStateOf(false) }
     var showBankManager by remember { mutableStateOf(false) }
+    var selectingBank by remember { mutableStateOf(false) }
+    val starredBankIds by viewModel.starredBankIds.collectAsStateWithLifecycle()
     var showBankPreview by remember { mutableStateOf(false) }
     var previewQuestions by remember { mutableStateOf<List<QuizQuestion>>(emptyList()) }
     var configurationError by remember { mutableStateOf<String?>(null) }
@@ -552,24 +569,26 @@ private fun QuizReviewPanel(
         SectionCard {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 QuizBankHeader(
-                    onManage = { showBankManager = true },
+                    onManage = { selectingBank = false; showBankManager = true },
                     onImport = { xmlLauncher.launch(arrayOf("text/xml", "application/xml", "*/*")) },
                 )
                 if (banks.isEmpty()) {
                     Text("尚未导入题库，请先选择 XML 文件。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
-                    NvvDropdown(
-                        label = "选择题库",
-                        value = selectedBankId,
-                        options = banks.map { it.id as String? to "${it.displayName()}（${it.questionCount} 题）" },
-                        icon = NvvIcons.FileQuestion,
-                        onChange = { bankId ->
-                            selectedBankId = bankId
-                            rangeStart = "1"
-                            rangeEnd = banks.firstOrNull { it.id == bankId }?.questionCount?.toString().orEmpty()
-                            persist()
-                        },
-                    )
+                    OutlinedButton(
+                        onClick = { selectingBank = true; showBankManager = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Icon(NvvIcons.FileQuestion, null)
+                        Text(
+                            selectedBank?.let { "${it.displayName()}（${it.questionCount} 题）" } ?: "选择题库",
+                            modifier = Modifier.weight(1f).padding(start = 8.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Icon(NvvIcons.ChevronDown, null)
+                    }
                     Row(
                         modifier = Modifier.align(Alignment.End),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -811,8 +830,17 @@ private fun QuizReviewPanel(
     if (showBankManager) {
         QuizBankManagerDialog(
             banks = banks,
+            starredIds = starredBankIds,
+            onToggleStar = viewModel::toggleQuizBankStar,
             onRename = viewModel::renameQuizBank,
             onDelete = viewModel::deleteQuizBank,
+            onSelect = if (selectingBank) { bankId ->
+                selectedBankId = bankId
+                rangeStart = "1"
+                rangeEnd = banks.firstOrNull { it.id == bankId }?.questionCount?.toString().orEmpty()
+                persist()
+                showBankManager = false
+            } else null,
             onDismiss = { showBankManager = false },
         )
     }
@@ -874,15 +902,22 @@ private fun QuizBankActions(
 }
 
 @Composable
-private fun QuizBankManagerDialog(
+internal fun QuizBankManagerDialog(
     banks: List<QuizBank>,
+    starredIds: Set<String>,
+    onToggleStar: (String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    onSelect: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     var editingBankId by remember { mutableStateOf<String?>(null) }
     var editingName by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<QuizBank?>(null) }
+    var search by remember { mutableStateOf("") }
+    val visibleBanks = banks.filter {
+        search.isBlank() || it.displayName().contains(search.trim(), ignoreCase = true)
+    }.sortedWith(compareByDescending<QuizBank> { it.id in starredIds }.thenByDescending { it.importedAt })
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -904,7 +939,7 @@ private fun QuizBankManagerDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text("题库管理", style = MaterialTheme.typography.headlineSmall)
+                        Text(if (onSelect == null) "题库管理" else "选择题库", style = MaterialTheme.typography.headlineSmall)
                         Text(
                             "重命名和删除会在同步时更新到服务器。",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -913,10 +948,21 @@ private fun QuizBankManagerDialog(
                     }
                     OutlinedButton(onClick = onDismiss, shape = CircleShape) { Text("完成") }
                 }
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("搜索题库") },
+                    leadingIcon = { Icon(NvvIcons.Search, null) },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.large,
+                )
                 if (banks.isEmpty()) {
                     Text("暂无题库。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (visibleBanks.isEmpty()) {
+                    Text("没有匹配的题库。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                banks.forEach { bank ->
+                visibleBanks.forEach { bank ->
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
@@ -984,6 +1030,16 @@ private fun QuizBankManagerDialog(
                                             style = MaterialTheme.typography.labelMedium,
                                         )
                                     }
+                                    IconButton(onClick = { onToggleStar(bank.id) }) {
+                                        Text(if (bank.id in starredIds) "★" else "☆", color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                if (onSelect != null) {
+                                    OutlinedButton(
+                                        onClick = { onSelect(bank.id) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = CircleShape,
+                                    ) { Text("选择此题库") }
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),

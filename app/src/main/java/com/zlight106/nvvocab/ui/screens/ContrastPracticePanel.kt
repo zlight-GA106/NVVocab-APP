@@ -93,6 +93,8 @@ fun ContrastPracticePanel(
     var timeLimitText by remember { mutableStateOf(savedPreferences.timeLimitText) }
     var saveGeneratedBank by remember { mutableStateOf(savedPreferences.saveGeneratedBank) }
     var selectedQuizBankId by remember { mutableStateOf(savedPreferences.selectedQuizBankId) }
+    var showQuizBankPicker by remember { mutableStateOf(false) }
+    val starredBankIds by viewModel.starredBankIds.collectAsStateWithLifecycle()
     var showWordPicker by remember { mutableStateOf(false) }
     var showPresetEditor by remember { mutableStateOf(false) }
     var generating by remember { mutableStateOf(false) }
@@ -425,20 +427,27 @@ fun ContrastPracticePanel(
                     )
                 }
                 if (type != ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH) {
-                    NvvDropdown(
-                        label = "从题库选择练习",
-                        value = selectedQuizBankId,
-                        options = listOf(null to "根据当前词库生成") + quizBanks.map { bank ->
-                            bank.id as String? to "${bank.name.ifBlank { "未命名题库" }}（${bank.questionCount} 题）"
-                        },
-                        icon = NvvIcons.FileQuestion,
-                        onChange = {
-                            selectedQuizBankId = it
+                    OutlinedButton(
+                        onClick = { showQuizBankPicker = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Icon(NvvIcons.FileQuestion, null)
+                        Text(
+                            quizBanks.firstOrNull { it.id == selectedQuizBankId }?.name
+                                ?: "根据当前词库生成 · 选择题库",
+                            modifier = Modifier.weight(1f).padding(start = 8.dp),
+                        )
+                        Icon(NvvIcons.ChevronDown, null)
+                    }
+                    if (selectedQuizBankId != null) {
+                        OutlinedButton(onClick = {
+                            selectedQuizBankId = null
                             started = false
                             finished = false
                             persist()
-                        },
-                    )
+                        }, shape = CircleShape) { Text("改为根据词库生成") }
+                    }
                 }
                 if (type != ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH && selectedQuizBankId == null) {
                     Row(
@@ -565,6 +574,23 @@ fun ContrastPracticePanel(
         }
     }
 
+    if (showQuizBankPicker) {
+        QuizBankManagerDialog(
+            banks = quizBanks,
+            starredIds = starredBankIds,
+            onToggleStar = viewModel::toggleQuizBankStar,
+            onRename = viewModel::renameQuizBank,
+            onDelete = viewModel::deleteQuizBank,
+            onSelect = { bankId ->
+                selectedQuizBankId = bankId
+                started = false
+                finished = false
+                persist()
+                showQuizBankPicker = false
+            },
+            onDismiss = { showQuizBankPicker = false },
+        )
+    }
     if (showWordPicker) {
         WordPickerDialog(
             words = words,

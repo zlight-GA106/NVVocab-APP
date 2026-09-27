@@ -1,5 +1,6 @@
 package com.zlight106.nvvocab.ui.screens
 
+import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +58,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -89,9 +92,10 @@ import com.zlight106.nvvocab.ui.icons.NvvIcons
 import com.zlight106.nvvocab.domain.AttemptAnalytics
 import com.zlight106.nvvocab.domain.AttemptModeTimeSummary
 import java.util.UUID
+import java.util.Locale
 import kotlinx.coroutines.delay
 
-sealed interface PracticeSessionRequest {
+sealed interface PracticeSessionRequest : java.io.Serializable {
     data class Words(
         val queue: List<WordEntry>,
         val mode: DictationMode,
@@ -217,11 +221,30 @@ fun PracticeSessionScreen(
     viewModel: MainViewModel,
     administratorMode: Boolean,
     onExit: () -> Unit,
+    onPause: () -> Unit,
 ) {
     val runtime by viewModel.practiceSessionRuntime.collectAsStateWithLifecycle()
     val sessionRuntime = runtime ?: return
     val settled = sessionRuntime.finished
     var showExitDialog by remember { mutableStateOf(false) }
+    val optionSpeechEnabled by viewModel.optionSpeechEnabled.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var ttsReady by remember { mutableStateOf(false) }
+    val tts = remember(context) {
+        TextToSpeech(context.applicationContext) { status ->
+            ttsReady = status == TextToSpeech.SUCCESS
+        }
+    }
+    DisposableEffect(tts, ttsReady) {
+        if (ttsReady) tts.language = Locale.US
+        onDispose { if (ttsReady) tts.stop() }
+    }
+    DisposableEffect(tts) { onDispose { tts.shutdown() } }
+    val speakOption: (String) -> Unit = { option ->
+        if (optionSpeechEnabled && ttsReady) {
+            tts.speak(option, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+        }
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     DisposableEffect(lifecycleOwner, settled) {
@@ -299,6 +322,7 @@ fun PracticeSessionScreen(
                     includeTimingInXml = request.includeTimingInXml,
                     viewModel = viewModel,
                     showAnswers = administratorMode,
+                    onOptionSelected = speakOption,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -320,6 +344,7 @@ fun PracticeSessionScreen(
                     includeTimingInXml = true,
                     viewModel = viewModel,
                     showAnswers = true,
+                    onOptionSelected = speakOption,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -340,18 +365,26 @@ fun PracticeSessionScreen(
             onDismissRequest = { showExitDialog = false },
             icon = { Icon(NvvIcons.AlertCircle, null) },
             title = { Text("退出当前练习？") },
-            text = { Text("是否退出，未结算的进度将不会保存") },
+            text = { Text("可以保留本轮进度，或只结算已提交的题目。") },
             dismissButton = {
-                OutlinedButton(
-                    onClick = { showExitDialog = false },
-                    shape = CircleShape,
-                ) {
-                    Text("继续练习")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showExitDialog = false }, shape = CircleShape) {
+                        Text("继续练习")
+                    }
+                    OutlinedButton(onClick = {
+                        showExitDialog = false
+                        viewModel.pausePracticeSession(onPause)
+                    }, shape = CircleShape) {
+                        Text("暂停答题")
+                    }
                 }
             },
             confirmButton = {
-                Button(onClick = onExit, shape = CircleShape) {
-                    Text("确认退出")
+                Button(onClick = {
+                    showExitDialog = false
+                    interruptAndSettle(request, sessionRuntime, viewModel)
+                }, shape = CircleShape) {
+                    Text("打断并结算")
                 }
             },
             shape = MaterialTheme.shapes.extraLarge,
@@ -365,6 +398,78 @@ private fun PracticeSessionRequest.title(): String = when (this) {
     is PracticeSessionRequest.Contrast -> "对照练习"
     is PracticeSessionRequest.WrongBook -> "错题复习"
     is PracticeSessionRequest.Mixed -> "混合复习"
+}
+
+private fun interruptAndSettle(
+    request: PracticeSessionRequest,
+    runtime: PracticeSessionRuntime,
+    viewModel: MainViewModel,
+) {
+    val attempts = runtime.attempts.sortedBy(PracticeAttempt::sequenceIndex)
+    val complete = {
+        viewModel.clearQuestionTimers(runtime.sessionId)
+        viewModel.markPracticeSessionFinished()
+    }
+    if (attempts.isEmpty()) {
+        complete()
+        return
+    }
+    when (request) {
+        is PracticeSessionRequest.Words -> {
+            val results = if (request.mode == DictationMode.REVIEW) attempts.mapNotNull { attempt ->
+                request.queue.getOrNull(attempt.sequenceIndex)?.let { word ->
+                    WordReviewResult(word, if (!attempt.correct) 0 else if (attempt.hintUsed) 3 else 5)
+                }
+            } else emptyList()
+            viewModel.recordReviewSession(results, attempts, onComplete = complete)
+        }
+        is PracticeSessionRequest.Quiz -> viewModel.recordQuizSession(
+            attempts.mapNotNull { it.toQuizResultRecord(request.queue)?.answer },
+            attempts,
+            onComplete = complete,
+        )
+        is PracticeSessionRequest.WrongBook -> viewModel.recordWrongQuestionSession(
+            attempts.mapNotNull { it.toQuizResultRecord(request.queue.map(WrongQuestionEntry::toQuizQuestion))?.answer },
+            attempts,
+            onComplete = complete,
+        )
+        is PracticeSessionRequest.Contrast -> {
+            val results = attempts.mapNotNull { it.toContrastResult(request.queue) }
+            viewModel.recordContrastPracticeSession(
+                ContrastPracticeSession(
+                    id = UUID.randomUUID().toString(),
+                    completedAt = System.currentTimeMillis(),
+                    practiceType = request.practiceType,
+                    difficulty = request.difficulty,
+                    questionCount = results.size,
+                    correctCount = results.count(ContrastQuestionResult::correct),
+                    elapsedSeconds = (attempts.sumOf(PracticeAttempt::activeTimeMs) / 1_000L).toInt(),
+                    hintEnabled = request.hintEnabled,
+                ),
+                results = results,
+                attempts = attempts,
+                onComplete = complete,
+            )
+        }
+        is PracticeSessionRequest.Mixed -> {
+            val answers = attempts.mapNotNull { it.toMixedAnswerRecord(request.queue) }
+            val wordResults = answers.mapNotNull { answer ->
+                answer.wordQuality?.let { quality -> WordReviewResult(requireNotNull(answer.item.word), quality) }
+            }
+            val contrastResults = answers.filter { it.item.mode != MixedReviewMode.DICTATION }
+                .groupBy({ it.item.mode }) { answer ->
+                    ContrastQuestionResult(requireNotNull(answer.item.contrastQuestion), answer.selectedIndex)
+                }
+            viewModel.recordMixedReviewSession(
+                wordResults = wordResults,
+                contrastResults = contrastResults,
+                difficulty = request.difficulty,
+                elapsedSeconds = (attempts.sumOf(PracticeAttempt::activeTimeMs) / 1_000L).toInt(),
+                attempts = attempts,
+                onComplete = complete,
+            )
+        }
+    }
 }
 
 @Composable
@@ -386,7 +491,7 @@ private fun WordSession(
         if (runtime.finished) {
             SessionResult(
                 title = "本轮已结算",
-                summary = "已完成 ${request.queue.size} 个单词",
+                summary = "已完成 ${runtime.attempts.size} / ${request.queue.size} 个单词",
                 sessionId = runtime.sessionId,
                 attempts = runtime.attempts,
                 viewModel = viewModel,
@@ -486,9 +591,9 @@ private fun WordQuestion(
     onPrevious: () -> Unit,
     onComplete: (WordAnswerOutcome) -> Unit,
 ) {
-    var answer by remember(word.id) { mutableStateOf("") }
-    var checked by remember(word.id) { mutableStateOf(false) }
-    var hinted by remember(word.id) { mutableStateOf(false) }
+    var answer by rememberSaveable(word.id) { mutableStateOf("") }
+    var checked by rememberSaveable(word.id) { mutableStateOf(false) }
+    var hinted by rememberSaveable(word.id) { mutableStateOf(false) }
     val correct = answer.trim().equals(word.spelling.trim(), ignoreCase = true)
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
@@ -582,6 +687,7 @@ private fun QuizSession(
     includeTimingInXml: Boolean,
     viewModel: MainViewModel,
     showAnswers: Boolean,
+    onOptionSelected: (String) -> Unit,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -601,7 +707,7 @@ private fun QuizSession(
             val possibleScore = records.sumOf { it.question.score }
             SessionResult(
                 title = "答题已结算",
-                summary = "正确 $correctCount / ${records.size}，得分 $totalScore / $possibleScore",
+                summary = "已答 ${records.size} / ${queue.size}，正确 $correctCount，得分 $totalScore / $possibleScore",
                 sessionId = runtime.sessionId,
                 attempts = runtime.attempts,
                 viewModel = viewModel,
@@ -707,6 +813,7 @@ private fun QuizSession(
                     canGoPrevious = currentIndex > 0,
                     onPrevious = returnToPrevious,
                     onComplete = ::saveAndAdvance,
+                    onOptionSelected = onOptionSelected,
                 )
                 QuizQuestionType.FILL_BLANK -> FillBlankQuestion(
                     question = currentQuestion,
@@ -745,16 +852,17 @@ private fun ChoiceQuestion(
     canGoPrevious: Boolean,
     onPrevious: () -> Unit,
     onComplete: (QuizSessionAnswer) -> Unit,
+    onOptionSelected: (String) -> Unit,
 ) {
-    var selectedAnswers by remember(question.id, initialAnswer) {
+    var selectedAnswers by rememberSaveable(question.id, initialAnswer) {
         mutableStateOf(initialAnswer?.selectedAnswers.orEmpty())
     }
-    var checked by remember(question.id, initialAnswer, unifiedSettlement) {
+    var checked by rememberSaveable(question.id, initialAnswer, unifiedSettlement) {
         mutableStateOf(!unifiedSettlement && initialAnswer != null)
     }
     val multipleChoice = question.answers.size > 1
     val correct = selectedAnswers == question.answers
-    var remainingSeconds by remember(question.id, timeLimitSeconds) {
+    var remainingSeconds by rememberSaveable(question.id, timeLimitSeconds) {
         mutableIntStateOf(timeLimitSeconds ?: 0)
     }
 
@@ -801,6 +909,7 @@ private fun ChoiceQuestion(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         if (!checked && enabled) {
+                            onOptionSelected(option.text)
                             selectedAnswers = if (multipleChoice) {
                                 if (selected) selectedAnswers - option.id else selectedAnswers + option.id
                             } else {
@@ -900,7 +1009,7 @@ private fun ContrastSession(
             val accuracy = if (records.isEmpty()) 0 else correctCount * 100 / records.size
             SessionResult(
                 title = "对照练习已结算",
-                summary = "正确 $correctCount / ${records.size}，正确率 $accuracy%，用时 $elapsedSeconds 秒",
+                summary = "已答 ${records.size} / ${request.queue.size}，正确 $correctCount，正确率 $accuracy%，用时 $elapsedSeconds 秒",
                 sessionId = runtime.sessionId,
                 attempts = runtime.attempts,
                 viewModel = viewModel,
@@ -1005,11 +1114,11 @@ private fun ContrastQuestion(
     onComplete: (Int?) -> Unit,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    var selectedIndex by remember(question.id, initialSelectedIndex) {
+    var selectedIndex by rememberSaveable(question.id, initialSelectedIndex) {
         mutableStateOf(initialSelectedIndex)
     }
-    var checked by remember(question.id) { mutableStateOf(false) }
-    var remainingSeconds by remember(question.id) { mutableIntStateOf(timeLimitSeconds) }
+    var checked by rememberSaveable(question.id) { mutableStateOf(false) }
+    var remainingSeconds by rememberSaveable(question.id) { mutableIntStateOf(timeLimitSeconds) }
 
     LaunchedEffect(question.id, checked) {
         while (!checked && remainingSeconds > 0) {
@@ -1168,17 +1277,17 @@ private fun FillBlankQuestion(
     onPrevious: () -> Unit,
     onComplete: (QuizSessionAnswer) -> Unit,
 ) {
-    var userAnswer by remember(question.id, initialAnswer) { mutableStateOf(initialAnswer?.userAnswer.orEmpty()) }
+    var userAnswer by rememberSaveable(question.id, initialAnswer) { mutableStateOf(initialAnswer?.userAnswer.orEmpty()) }
     var evaluation by remember(question.id, initialAnswer) { mutableStateOf(initialAnswer?.evaluation) }
-    var hintUsed by remember(question.id, initialAnswer) { mutableStateOf(initialAnswer?.hintUsed == true) }
+    var hintUsed by rememberSaveable(question.id, initialAnswer) { mutableStateOf(initialAnswer?.hintUsed == true) }
     var evaluating by remember(question.id) { mutableStateOf(false) }
-    var checked by remember(question.id, initialAnswer, unifiedSettlement) {
+    var checked by rememberSaveable(question.id, initialAnswer, unifiedSettlement) {
         mutableStateOf(!unifiedSettlement && initialAnswer?.evaluation != null)
     }
-    var hintText by remember(question.id) { mutableStateOf<String?>(null) }
+    var hintText by rememberSaveable(question.id) { mutableStateOf<String?>(null) }
     val focusRequester = remember(question.id) { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    var remainingSeconds by remember(question.id, timeLimitSeconds) {
+    var remainingSeconds by rememberSaveable(question.id, timeLimitSeconds) {
         mutableIntStateOf(timeLimitSeconds ?: 0)
     }
 
@@ -1432,7 +1541,7 @@ private fun MixedSession(
         if (runtime.finished) {
             SessionResult(
                 title = "混合复习已结算",
-                summary = "已完成 ${request.queue.size} 个不同单词",
+                summary = "已完成 ${runtime.attempts.size} / ${request.queue.size} 个不同单词",
                 sessionId = runtime.sessionId,
                 attempts = runtime.attempts,
                 viewModel = viewModel,

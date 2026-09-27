@@ -1,6 +1,7 @@
 package com.zlight106.nvvocab.data
 
 import java.time.LocalDate
+import java.io.Serializable
 
 data class ParsedWord(
     val spelling: String,
@@ -22,7 +23,7 @@ data class WordEntry(
     val nextReviewAt: Long,
     val wrongCount: Int,
     val dirty: Boolean,
-)
+) : Serializable
 
 data class ReviewLogEntry(
     val id: String,
@@ -44,7 +45,7 @@ data class QuizBank(
 data class QuizOption(
     val id: String,
     val text: String,
-)
+) : Serializable
 
 data class ParaphraseSeed(
     val id: String,
@@ -57,7 +58,7 @@ data class ParaphraseSeed(
     val createdAt: Long,
     val updatedAt: Long,
     val dirty: Boolean,
-)
+) : Serializable
 
 fun formatOptionAnswers(
     options: List<QuizOption>,
@@ -85,7 +86,7 @@ data class QuizQuestion(
     val explanation: String? = null,
     val category: String? = null,
     val sourceReference: String? = null,
-)
+) : Serializable
 
 enum class QuizQuestionType {
     MULTIPLE_CHOICE,
@@ -195,14 +196,14 @@ data class PracticeAttempt(
     val hintUsed: Boolean,
     val timestamp: Long,
     val dirty: Boolean,
-)
+) : Serializable
 
 data class PracticeSessionRuntime(
     val sessionId: String,
     val currentIndex: Int = 0,
     val attempts: List<PracticeAttempt> = emptyList(),
     val finished: Boolean = false,
-)
+) : Serializable
 
 enum class ItemMaturity {
     NEW,
@@ -273,7 +274,7 @@ data class WrongQuestionEntry(
     val sourceReference: String? = null,
     val lastUserAnswer: String? = null,
     val hintUsedCount: Int = 0,
-) {
+) : Serializable {
     val attemptCount: Int
         get() = wrongCount + correctCount
 
@@ -433,7 +434,7 @@ data class ContrastQuestion(
     val prompt: String,
     val options: List<String>,
     val correctIndex: Int,
-)
+) : Serializable
 
 data class ContrastPracticeSession(
     val id: String,
@@ -638,7 +639,7 @@ data class MixedReviewItem(
     val paraphraseSeed: ParaphraseSeed? = null,
     val mode: MixedReviewMode,
     val contrastQuestion: ContrastQuestion? = null,
-) {
+) : Serializable {
     val itemId: String
         get() = paraphraseSeed?.id ?: requireNotNull(word).id
 

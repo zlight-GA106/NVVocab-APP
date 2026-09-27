@@ -559,6 +559,9 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
                 Text("导出 SQLite 文件", Modifier.padding(start = 8.dp))
             }
         }
+        ExpandableSettingCard("遥测管理", NvvIcons.FileQuestion) {
+            TelemetryManagementPanel(viewModel)
+        }
     }
 }
 

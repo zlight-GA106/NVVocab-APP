@@ -144,6 +144,7 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                     syncRuntimeState = syncRuntimeState,
                     activePracticeSession = activePracticeSession,
                     onStartPracticeSession = { request ->
+                        navController.popBackStack(PRACTICE_SESSION_ROUTE, true)
                         viewModel.startPracticeSession(request)
                         navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
                     },
@@ -171,6 +172,7 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                 syncRuntimeState = syncRuntimeState,
                 activePracticeSession = activePracticeSession,
                 onStartPracticeSession = { request ->
+                    navController.popBackStack(PRACTICE_SESSION_ROUTE, true)
                     viewModel.startPracticeSession(request)
                     navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
                 },
@@ -279,6 +281,12 @@ private fun AppScaffold(
                     administratorMode = state.administratorMode,
                     onAdministratorModeChange = viewModel::setAdministratorMode,
                     onStartSession = onStartPracticeSession,
+                    onResumeSession = {
+                        viewModel.resumePracticeSession()
+                        if (!navController.popBackStack(PRACTICE_SESSION_ROUTE, false)) {
+                            navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
+                        }
+                    },
                 )
             }
             composable(Destination.SETTINGS.route) { SettingsScreen(viewModel, state, quizBanks) }
@@ -292,6 +300,9 @@ private fun AppScaffold(
                         viewModel = viewModel,
                         administratorMode = state.administratorMode,
                         onExit = onClosePracticeSession,
+                        onPause = {
+                            navController.navigate(Destination.DICTATE.route) { launchSingleTop = true }
+                        },
                     )
                 }
             }

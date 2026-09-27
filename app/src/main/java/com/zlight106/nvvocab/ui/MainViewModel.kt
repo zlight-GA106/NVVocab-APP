@@ -44,6 +44,8 @@ import com.zlight106.nvvocab.data.WordReviewPreferences
 import com.zlight106.nvvocab.data.WordReviewResult
 import com.zlight106.nvvocab.ui.screens.PracticeSessionRequest
 import com.zlight106.nvvocab.data.repository.VocabularyRepository
+import com.zlight106.nvvocab.data.local.TelemetryArchive
+import com.zlight106.nvvocab.data.local.TelemetryArchiveEntry
 import com.zlight106.nvvocab.domain.WordTextParser
 import com.zlight106.nvvocab.domain.AttemptAnalytics
 import com.zlight106.nvvocab.domain.ParaphrasePracticeGenerator
@@ -59,6 +61,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class AppUiState(
     val administratorMode: Boolean,
@@ -85,8 +89,18 @@ data class AppUiState(
     val wordReviewPreferences: WordReviewPreferences,
 )
 
+private fun PracticeSessionRequest.titleForArchive(): String = when (this) {
+    is PracticeSessionRequest.Words -> "单词复习"
+    is PracticeSessionRequest.Quiz -> "题库练习"
+    is PracticeSessionRequest.Contrast -> "对照练习"
+    is PracticeSessionRequest.WrongBook -> "错题复习"
+    is PracticeSessionRequest.Mixed -> "混合复习"
+}
+
 class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     private val preferences = application.preferences
+    private val telemetryArchive = TelemetryArchive(application)
+    private val pausedPracticeStore = PausedPracticeStore(application)
     private val repository: VocabularyRepository = application.repository
     private val mutableUiState = MutableStateFlow(readUiState())
     private val mutableContrastGenerationProgress = MutableStateFlow(0f)
@@ -113,6 +127,12 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     val practiceSessionRuntime: StateFlow<PracticeSessionRuntime?> = mutablePracticeSessionRuntime.asStateFlow()
     val analyzingWrongQuestionId: StateFlow<String?> = mutableAnalyzingWrongQuestionId.asStateFlow()
     val practiceAttempts = repository.practiceAttempts
+    private val mutableStarredBankIds = MutableStateFlow(preferences.readStarredQuizBankIds())
+    val starredBankIds: StateFlow<Set<String>> = mutableStarredBankIds.asStateFlow()
+    private val mutableOptionSpeechEnabled = MutableStateFlow(preferences.isOptionSpeechEnabled())
+    val optionSpeechEnabled: StateFlow<Boolean> = mutableOptionSpeechEnabled.asStateFlow()
+    private val mutableTelemetryEntries = MutableStateFlow(telemetryArchive.list())
+    val telemetryEntries: StateFlow<List<TelemetryArchiveEntry>> = mutableTelemetryEntries.asStateFlow()
     val paraphraseSeeds = repository.paraphraseSeeds
     val maturitySnapshots = repository.practiceAttempts
         .map(AttemptAnalytics::maturitySnapshots)
@@ -125,6 +145,13 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     private var practiceLifecycleActive = false
 
     init {
+        pausedPracticeStore.restore()?.let { snapshot ->
+            mutableActivePracticeSession.value = snapshot.request
+            mutableActivePracticeSessionId.value = snapshot.runtime.sessionId
+            mutablePracticeSessionRuntime.value = snapshot.runtime
+            accumulatedQuestionTime["${snapshot.runtime.sessionId}:${snapshot.runtime.currentIndex}"] =
+                snapshot.currentQuestionTimeMs
+        }
         viewModelScope.launch { repository.refreshLocal() }
     }
 
@@ -543,6 +570,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     }
 
     fun startPracticeSession(request: PracticeSessionRequest) {
+        pausedPracticeStore.clear()
         synchronized(timerLock) {
             accumulatedQuestionTime.clear()
             activeQuestionKey = null
@@ -555,6 +583,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     }
 
     fun closePracticeSession() {
+        pausedPracticeStore.clear()
         synchronized(timerLock) {
             pauseActiveQuestionTimerLocked()
             accumulatedQuestionTime.clear()
@@ -584,7 +613,71 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     }
 
     fun markPracticeSessionFinished() {
+        pausedPracticeStore.clear()
         mutablePracticeSessionRuntime.value = mutablePracticeSessionRuntime.value?.copy(finished = true)
+        val runtime = mutablePracticeSessionRuntime.value ?: return
+        val request = mutableActivePracticeSession.value ?: return
+        val category = request.titleForArchive()
+        val sourceName = when (request) {
+            is PracticeSessionRequest.Quiz -> repository.quizBanks.value
+                .firstOrNull { it.id == request.queue.firstOrNull()?.bankId }?.name ?: "题库"
+            is PracticeSessionRequest.WrongBook -> "错题本"
+            else -> runtime.attempts.firstOrNull()?.sourceId.orEmpty().ifBlank { category }
+        }
+        viewModelScope.launch {
+            runCatching {
+                val includeTiming = when (request) {
+                    is PracticeSessionRequest.Quiz -> request.includeTimingInXml
+                    is PracticeSessionRequest.Contrast -> request.includeTimingInXml
+                    is PracticeSessionRequest.Mixed -> request.includeTimingInXml
+                    else -> true
+                }
+                telemetryArchive.save(runtime.sessionId, runtime.attempts, includeTiming, category, sourceName)
+                mutableTelemetryEntries.value = telemetryArchive.list()
+            }.onFailure { showMessage(it.message ?: "遥测归档失败") }
+        }
+    }
+
+    fun pausePracticeSession(onComplete: () -> Unit) {
+        val request = mutableActivePracticeSession.value ?: return
+        val runtime = mutablePracticeSessionRuntime.value ?: return
+        val elapsed = snapshotQuestionTime(runtime.sessionId, runtime.currentIndex)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    pausedPracticeStore.save(PausedPracticeSnapshot(request, runtime, elapsed))
+                }
+            }.onSuccess { onComplete() }
+                .onFailure { showMessage(it.message ?: "暂停进度保存失败") }
+        }
+    }
+
+    fun resumePracticeSession() {
+        pausedPracticeStore.clear()
+    }
+
+    fun toggleQuizBankStar(bankId: String) {
+        val updated = mutableStarredBankIds.value.toMutableSet()
+        if (!updated.add(bankId)) updated.remove(bankId)
+        preferences.saveStarredQuizBankIds(updated)
+        mutableStarredBankIds.value = updated
+    }
+
+    fun setOptionSpeechEnabled(enabled: Boolean) {
+        preferences.setOptionSpeechEnabled(enabled)
+        mutableOptionSpeechEnabled.value = enabled
+    }
+
+    fun exportArchivedTelemetry(sessionIds: Set<String>, zip: Boolean, uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                application.contentResolver.openOutputStream(uri, "w")?.use { output ->
+                    if (zip) telemetryArchive.exportZip(sessionIds, output)
+                    else telemetryArchive.exportOne(sessionIds.single(), output)
+                } ?: error("无法写入所选文件")
+            }.onSuccess { showMessage("遥测已导出") }
+                .onFailure { showMessage(it.message ?: "遥测导出失败") }
+        }
     }
 
     fun setPracticeLifecycleActive(active: Boolean) {

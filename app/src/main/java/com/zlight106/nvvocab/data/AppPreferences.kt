@@ -153,6 +153,21 @@ class AppPreferences(context: Context) {
         preferences.edit().putBoolean(KEY_ADMINISTRATOR_MODE, enabled).apply()
     }
 
+    // Device-only preferences: neither field is part of the synced SQLite data.
+    fun readStarredQuizBankIds(): Set<String> =
+        preferences.getStringSet("starred_quiz_bank_ids", emptySet()).orEmpty().toSet()
+
+    fun saveStarredQuizBankIds(ids: Set<String>) {
+        preferences.edit().putStringSet("starred_quiz_bank_ids", ids.toSet()).apply()
+    }
+
+    fun isOptionSpeechEnabled(): Boolean =
+        preferences.getBoolean("option_speech_enabled", false)
+
+    fun setOptionSpeechEnabled(enabled: Boolean) {
+        preferences.edit().putBoolean("option_speech_enabled", enabled).apply()
+    }
+
     fun readThemeMode(): ThemeMode = runCatching {
         ThemeMode.valueOf(preferences.getString(KEY_THEME_MODE, ThemeMode.SYSTEM.name).orEmpty())
     }.getOrDefault(ThemeMode.SYSTEM)
