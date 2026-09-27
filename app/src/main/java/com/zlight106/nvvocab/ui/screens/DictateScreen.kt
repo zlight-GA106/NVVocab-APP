@@ -99,7 +99,6 @@ fun DictateScreen(
     onResumeSession: () -> Unit,
 ) {
     val appState by viewModel.uiState.collectAsStateWithLifecycle()
-    val optionSpeechEnabled by viewModel.optionSpeechEnabled.collectAsStateWithLifecycle()
     val activeSession by viewModel.activePracticeSession.collectAsStateWithLifecycle()
     val activeRuntime by viewModel.practiceSessionRuntime.collectAsStateWithLifecycle()
     val category = appState.reviewCategory
@@ -119,10 +118,6 @@ fun DictateScreen(
                 Icon(NvvIcons.Play, null)
                 Text("继续暂停的答题（第 ${(activeRuntime?.currentIndex ?: 0) + 1} 题）", Modifier.padding(start = 8.dp))
             }
-        }
-        SelectionRow(onClick = { viewModel.setOptionSpeechEnabled(!optionSpeechEnabled) }) {
-            Checkbox(checked = optionSpeechEnabled, onCheckedChange = null)
-            Text("点击选项自动播放 TTS", Modifier.padding(start = 8.dp))
         }
         ReviewCategorySelector(category, onChange = viewModel::setReviewCategory)
         AnimatedContent(
@@ -423,6 +418,7 @@ private fun QuizReviewPanel(
     onAdministratorModeChange: (Boolean) -> Unit,
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
+    val optionSpeechEnabled by viewModel.optionSpeechEnabled.collectAsStateWithLifecycle()
     var selectedBankId by remember { mutableStateOf(initialPreferences.selectedBankId) }
     var queueMode by remember { mutableStateOf(initialPreferences.queueMode) }
     var rangeStart by remember { mutableStateOf(initialPreferences.rangeStart) }
@@ -703,6 +699,20 @@ private fun QuizReviewPanel(
                             Text("随机选项", style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "每次开始答题时随机排列选项，并自动重映射正确答案。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    SelectionRow(
+                        onClick = { viewModel.setOptionSpeechEnabled(!optionSpeechEnabled) },
+                        spacing = 10.dp,
+                    ) {
+                        Checkbox(checked = optionSpeechEnabled, onCheckedChange = null)
+                        Column(Modifier.weight(1f)) {
+                            Text("点击选项自动播放 TTS", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "答题时点选英文选项，自动朗读该选项内容。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
