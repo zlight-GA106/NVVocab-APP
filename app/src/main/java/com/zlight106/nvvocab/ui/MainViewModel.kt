@@ -47,6 +47,7 @@ import com.zlight106.nvvocab.data.repository.VocabularyRepository
 import com.zlight106.nvvocab.data.local.TelemetryArchive
 import com.zlight106.nvvocab.data.local.TelemetryArchiveEntry
 import com.zlight106.nvvocab.domain.WordTextParser
+import com.zlight106.nvvocab.domain.WordUsagePractice
 import com.zlight106.nvvocab.domain.AttemptAnalytics
 import com.zlight106.nvvocab.domain.ParaphrasePracticeGenerator
 import com.zlight106.nvvocab.domain.ParaphraseSeedBatchParser
@@ -91,7 +92,7 @@ data class AppUiState(
 
 private fun PracticeSessionRequest.titleForArchive(): String = when (this) {
     is PracticeSessionRequest.Words -> "单词复习"
-    is PracticeSessionRequest.Quiz -> "题库练习"
+    is PracticeSessionRequest.Quiz -> if (queue.firstOrNull()?.category == WordUsagePractice.CATEGORY) "单词用法复习" else "题库练习"
     is PracticeSessionRequest.Contrast -> "对照练习"
     is PracticeSessionRequest.WrongBook -> "错题复习"
     is PracticeSessionRequest.Mixed -> "混合复习"
@@ -105,6 +106,9 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     private val mutableUiState = MutableStateFlow(readUiState())
     private val mutableContrastGenerationProgress = MutableStateFlow(0f)
     private val mutableMixedGenerationProgress = MutableStateFlow(0f)
+    private val mutableUsageGenerating = MutableStateFlow(false)
+    private val mutableUsageGenerationProgress = MutableStateFlow(0f)
+    private val mutableExportingQuizBanks = MutableStateFlow(false)
     private val mutableActivePracticeSession = MutableStateFlow<PracticeSessionRequest?>(null)
     private val mutableActivePracticeSessionId = MutableStateFlow<String?>(null)
     private val mutablePracticeSessionRuntime = MutableStateFlow<PracticeSessionRuntime?>(null)
@@ -120,6 +124,9 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     val studyTimeProgress = application.studyTimeTracker.progress
     val contrastGenerationProgress: StateFlow<Float> = mutableContrastGenerationProgress.asStateFlow()
     val mixedGenerationProgress: StateFlow<Float> = mutableMixedGenerationProgress.asStateFlow()
+    val usageGenerating = mutableUsageGenerating.asStateFlow()
+    val usageGenerationProgress = mutableUsageGenerationProgress.asStateFlow()
+    val exportingQuizBanks = mutableExportingQuizBanks.asStateFlow()
     val localDataLoaded = repository.localDataLoaded
     val wrongQuestions = repository.wrongQuestions
     val activePracticeSession: StateFlow<PracticeSessionRequest?> = mutableActivePracticeSession.asStateFlow()
@@ -394,6 +401,33 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
             runCatching { repository.renameQuizBank(bankId, name) }
                 .onSuccess { showMessage("题库名称已更新") }
                 .onFailure { showMessage(it.message ?: "题库重命名失败") }
+        }
+    }
+
+    fun generateWordUsageQuestions(targets: List<WordEntry>, difficulty: PracticeDifficulty, onComplete: (Result<List<QuizQuestion>>) -> Unit) {
+        if (mutableUsageGenerating.value) return
+        mutableUsageGenerating.value = true
+        mutableUsageGenerationProgress.value = 0f
+        viewModelScope.launch {
+            val result = runCatching {
+                repository.generateWordUsageQuestions(targets, difficulty) { mutableUsageGenerationProgress.value = it }
+            }
+            mutableUsageGenerating.value = false
+            result.exceptionOrNull()?.let { showMessage(it.message ?: "单词用法题生成失败") }
+            onComplete(result)
+        }
+    }
+
+    fun exportAllQuizBanks(uri: Uri) {
+        if (mutableExportingQuizBanks.value) return
+        mutableExportingQuizBanks.value = true
+        viewModelScope.launch {
+            runCatching {
+                application.contentResolver.openOutputStream(uri, "w")?.use { repository.exportAllQuizBanks(it) }
+                    ?: error("无法写入所选文件")
+            }.onSuccess { showMessage("已打包导出全部 $it 个题库") }
+                .onFailure { showMessage(it.message ?: "题库 ZIP 导出失败") }
+            mutableExportingQuizBanks.value = false
         }
     }
 

@@ -49,6 +49,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.AiProvider
 import com.zlight106.nvvocab.data.AiSettings
 import com.zlight106.nvvocab.data.DEFAULT_AI_PROMPT
@@ -128,6 +129,10 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
     ) { uri ->
         uri?.let(viewModel::exportDatabase)
     }
+    val exportingQuizBanks by viewModel.exportingQuizBanks.collectAsStateWithLifecycle()
+    val quizBanksExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri -> uri?.let(viewModel::exportAllQuizBanks) }
 
     fun requestNotificationPermission(enabled: Boolean) {
         if (enabled && Build.VERSION.SDK_INT >= 33 && !notificationGranted) {
@@ -557,6 +562,17 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
             ) {
                 Icon(NvvIcons.Download, null)
                 Text("导出 SQLite 文件", Modifier.padding(start = 8.dp))
+            }
+        }
+        ExpandableSettingCard("题库导出", NvvIcons.FileQuestion) {
+            Text("将全部 ${quizBanks.size} 个题库打包为 ZIP，每个题库保存为一个可重新导入的 XML 文件，保留题目、答案与解析。")
+            Button(
+                onClick = { quizBanksExportLauncher.launch("nvvocab-all-banks-${java.time.LocalDate.now()}.zip") },
+                enabled = quizBanks.isNotEmpty() && !exportingQuizBanks,
+                modifier = Modifier.fillMaxWidth(), shape = CircleShape,
+            ) {
+                Icon(NvvIcons.Download, null)
+                Text(if (exportingQuizBanks) "正在打包题库" else "将所有题库打包 ZIP 导出", Modifier.padding(start = 8.dp))
             }
         }
         ExpandableSettingCard("遥测管理", NvvIcons.FileQuestion) {

@@ -110,7 +110,7 @@ fun DictateScreen(
     ) {
         Text("沉浸复习", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "在单词拼写、本地题库与 AI 对照练习之间切换。",
+            "选择单词拼写、AI 单词用法、本地题库或对照练习。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (activeSession != null && activeRuntime?.finished == false) {
@@ -132,6 +132,7 @@ fun DictateScreen(
                     initialPreferences = appState.wordReviewPreferences,
                     onStartSession = onStartSession,
                 )
+                ReviewCategory.USAGE -> WordUsageReviewPanel(viewModel, words, tags, onStartSession)
                 ReviewCategory.QUESTIONS -> QuizReviewPanel(
                     viewModel = viewModel,
                     banks = quizBanks,
@@ -172,24 +173,13 @@ private fun ReviewCategorySelector(
     onChange: (ReviewCategory) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val compact = maxWidth < 600.dp
-        if (compact) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        val columns = if (maxWidth < 600.dp) 2 else 3
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ReviewCategory.entries.chunked(columns).forEach { row ->
                 SegmentedRow(Modifier.fillMaxWidth()) {
-                    ReviewCategory.entries.take(2).forEach { category ->
+                    row.forEach { category ->
                         ReviewCategorySegment(category, selected, onChange, Modifier.weight(1f))
                     }
-                }
-                SegmentedRow(Modifier.fillMaxWidth()) {
-                    ReviewCategory.entries.drop(2).forEach { category ->
-                        ReviewCategorySegment(category, selected, onChange, Modifier.weight(1f))
-                    }
-                }
-            }
-        } else {
-            SegmentedRow(Modifier.fillMaxWidth()) {
-                ReviewCategory.entries.forEach { category ->
-                    ReviewCategorySegment(category, selected, onChange, Modifier.weight(1f))
                 }
             }
         }
@@ -205,6 +195,7 @@ private fun ReviewCategorySegment(
 ) {
     val label = when (category) {
         ReviewCategory.WORDS -> "单词复习"
+        ReviewCategory.USAGE -> "单词用法复习"
         ReviewCategory.QUESTIONS -> "题库练习"
         ReviewCategory.CONTRAST -> "对照练习"
         ReviewCategory.MIXED -> "混合复习"
@@ -212,6 +203,7 @@ private fun ReviewCategorySegment(
     }
     val icon = when (category) {
         ReviewCategory.WORDS -> NvvIcons.BrainCircuit
+        ReviewCategory.USAGE -> NvvIcons.BookOpen
         ReviewCategory.QUESTIONS -> NvvIcons.FileQuestion
         ReviewCategory.CONTRAST -> NvvIcons.Sparkles
         ReviewCategory.MIXED -> NvvIcons.RefreshCw

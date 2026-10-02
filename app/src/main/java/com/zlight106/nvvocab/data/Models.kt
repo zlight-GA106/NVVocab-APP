@@ -552,6 +552,7 @@ enum class DictationMode {
 
 enum class ReviewCategory {
     WORDS,
+    USAGE,
     QUESTIONS,
     CONTRAST,
     MIXED,

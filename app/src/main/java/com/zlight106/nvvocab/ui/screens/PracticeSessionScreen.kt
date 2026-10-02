@@ -1,5 +1,7 @@
 package com.zlight106.nvvocab.ui.screens
 
+import com.zlight106.nvvocab.domain.WordUsagePractice
+
 import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -345,6 +347,7 @@ fun PracticeSessionScreen(
                     viewModel = viewModel,
                     showAnswers = administratorMode,
                     onOptionSelected = speakOption,
+                    onSpeakText = speakWord,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -353,6 +356,8 @@ fun PracticeSessionScreen(
                     runtime = sessionRuntime,
                     viewModel = viewModel,
                     showAnswers = administratorMode,
+                    onSpeakText = speakWord,
+                    onOptionSelected = speakOption,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -367,6 +372,7 @@ fun PracticeSessionScreen(
                     viewModel = viewModel,
                     showAnswers = true,
                     onOptionSelected = speakOption,
+                    onSpeakText = speakWord,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -376,6 +382,7 @@ fun PracticeSessionScreen(
                     viewModel = viewModel,
                     showAnswers = administratorMode,
                     onSpeakWord = speakWord,
+                    onOptionSelected = speakOption,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -426,7 +433,7 @@ fun PracticeSessionScreen(
 
 private fun PracticeSessionRequest.title(): String = when (this) {
     is PracticeSessionRequest.Words -> if (mode == DictationMode.REVIEW) "复习默写" else "拼写练习"
-    is PracticeSessionRequest.Quiz -> "题库答题"
+    is PracticeSessionRequest.Quiz -> if (queue.firstOrNull()?.category == WordUsagePractice.CATEGORY) "单词用法复习" else "题库答题"
     is PracticeSessionRequest.Contrast -> "对照练习"
     is PracticeSessionRequest.WrongBook -> "错题复习"
     is PracticeSessionRequest.Mixed -> "混合复习"
@@ -749,6 +756,7 @@ private fun QuizSession(
     viewModel: MainViewModel,
     showAnswers: Boolean,
     onOptionSelected: (String) -> Unit,
+    onSpeakText: (String) -> Unit,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -875,6 +883,7 @@ private fun QuizSession(
                     onPrevious = returnToPrevious,
                     onComplete = ::saveAndAdvance,
                     onOptionSelected = onOptionSelected,
+                    onSpeakText = onSpeakText,
                 )
                 QuizQuestionType.FILL_BLANK -> FillBlankQuestion(
                     question = currentQuestion,
@@ -914,6 +923,7 @@ private fun ChoiceQuestion(
     onPrevious: () -> Unit,
     onComplete: (QuizSessionAnswer) -> Unit,
     onOptionSelected: (String) -> Unit,
+    onSpeakText: (String) -> Unit,
 ) {
     var selectedAnswers by rememberSaveable(question.id, initialAnswer) {
         mutableStateOf(initialAnswer?.selectedAnswers.orEmpty())
@@ -922,6 +932,7 @@ private fun ChoiceQuestion(
         mutableStateOf(!unifiedSettlement && initialAnswer != null)
     }
     val multipleChoice = question.answers.size > 1
+    val wordUsage = question.category == WordUsagePractice.CATEGORY
     val correct = selectedAnswers == question.answers
     var remainingSeconds by rememberSaveable(question.id, timeLimitSeconds) {
         mutableIntStateOf(timeLimitSeconds ?: 0)
@@ -955,6 +966,14 @@ private fun ChoiceQuestion(
                     Text("${question.score} 分", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+            if (wordUsage) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("核心单词：${question.sourceReference.orEmpty()}", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.primary)
+                    IconButton(onClick = { onSpeakText(question.sourceReference.orEmpty()) }, enabled = enabled) {
+                        Icon(NvvIcons.Volume2, "朗读核心单词")
+                    }
+                }
+            }
             Text(question.text, style = MaterialTheme.typography.titleLarge)
             Text(if (multipleChoice) "多选题" else "单选题", color = MaterialTheme.colorScheme.onSurfaceVariant)
             question.options.forEach { option ->
@@ -970,7 +989,7 @@ private fun ChoiceQuestion(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         if (!checked && enabled) {
-                            onOptionSelected(option.text)
+                            if (wordUsage) onSpeakText(option.text) else onOptionSelected(option.text)
                             selectedAnswers = if (multipleChoice) {
                                 if (selected) selectedAnswers - option.id else selectedAnswers + option.id
                             } else {
@@ -989,6 +1008,11 @@ private fun ChoiceQuestion(
                     ) {
                         if (multipleChoice) Checkbox(selected, null) else RadioButton(selected, null)
                         Text("${option.id}. ${option.text}", modifier = Modifier.weight(1f))
+                        if (wordUsage) {
+                            IconButton(onClick = { onSpeakText(option.text) }, enabled = enabled) {
+                                Icon(NvvIcons.Volume2, "朗读词组 ${option.text}")
+                            }
+                        }
                     }
                 }
             }
@@ -1001,6 +1025,16 @@ private fun ChoiceQuestion(
                     },
                     color = if (correct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
+                if (wordUsage) {
+                    question.explanation?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    val example = WordUsagePractice.exampleText(question.explanation)
+                    if (example.isNotBlank()) {
+                        OutlinedButton(onClick = { onSpeakText(example) }, enabled = enabled, shape = CircleShape) {
+                            Icon(NvvIcons.Volume2, null)
+                            Text("播放例句", Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1052,6 +1086,8 @@ private fun ContrastSession(
     runtime: PracticeSessionRuntime,
     viewModel: MainViewModel,
     showAnswers: Boolean,
+    onSpeakText: (String) -> Unit,
+    onOptionSelected: (String) -> Unit,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -1091,6 +1127,8 @@ private fun ContrastSession(
                 }?.selectedIndex,
                 canGoPrevious = currentIndex > 0,
                 onPrevious = { viewModel.setPracticeSessionIndex(currentIndex - 1) },
+                onSpeakText = onSpeakText,
+                onOptionSelected = onOptionSelected,
                 onComplete = { selectedIndex ->
                     val question = request.queue[currentIndex]
                     val previous = runtime.attempts.firstOrNull { it.sequenceIndex == currentIndex }
@@ -1172,6 +1210,8 @@ private fun ContrastQuestion(
     initialSelectedIndex: Int?,
     canGoPrevious: Boolean,
     onPrevious: () -> Unit,
+    onSpeakText: (String) -> Unit,
+    onOptionSelected: (String) -> Unit,
     onComplete: (Int?) -> Unit,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1228,7 +1268,14 @@ private fun ContrastQuestion(
                     )
                 }
             }
-            Text(question.prompt, style = MaterialTheme.typography.headlineSmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(question.prompt, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+                if (question.prompt.contains(Regex("[A-Za-z]{2,}"))) {
+                    IconButton(onClick = { onSpeakText(question.prompt) }, enabled = enabled) {
+                        Icon(NvvIcons.Volume2, "朗读题干")
+                    }
+                }
+            }
             question.options.forEachIndexed { index, option ->
                 val selected = selectedIndex == index
                 val correct = index == question.correctIndex
@@ -1240,7 +1287,12 @@ private fun ContrastQuestion(
                 }
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    onClick = { if (!checked && enabled) selectedIndex = index },
+                    onClick = {
+                        if (!checked && enabled) {
+                            selectedIndex = index
+                            if (option.contains(Regex("[A-Za-z]{2,}"))) onOptionSelected(option)
+                        }
+                    },
                     shape = MaterialTheme.shapes.large,
                     color = color,
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -1252,6 +1304,11 @@ private fun ContrastQuestion(
                     ) {
                         RadioButton(selected = selected, onClick = null)
                         Text("${('A'.code + index).toChar()}. $option", modifier = Modifier.weight(1f))
+                        if (option.contains(Regex("[A-Za-z]{2,}"))) {
+                            IconButton(onClick = { onSpeakText(option) }, enabled = enabled) {
+                                Icon(NvvIcons.Volume2, "朗读选项 $option")
+                            }
+                        }
                     }
                 }
             }
@@ -1546,6 +1603,7 @@ private fun MixedSession(
     viewModel: MainViewModel,
     showAnswers: Boolean,
     onSpeakWord: (String) -> Unit,
+    onOptionSelected: (String) -> Unit,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -1668,6 +1726,8 @@ private fun MixedSession(
                     initialSelectedIndex = records.firstOrNull { it.item.itemId == item.itemId }?.selectedIndex,
                     canGoPrevious = currentIndex > 0,
                     onPrevious = { viewModel.setPracticeSessionIndex(currentIndex - 1) },
+                    onSpeakText = onSpeakWord,
+                    onOptionSelected = onOptionSelected,
                     onComplete = { selectedIndex ->
                         val previous = runtime.attempts.firstOrNull { it.sequenceIndex == currentIndex }
                         val correct = selectedIndex == question.correctIndex

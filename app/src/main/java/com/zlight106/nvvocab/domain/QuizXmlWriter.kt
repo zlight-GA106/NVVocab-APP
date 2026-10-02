@@ -10,12 +10,13 @@ import javax.xml.transform.dom.DOMSource
 import javax.xml.transform.stream.StreamResult
 
 object QuizXmlWriter {
-    fun write(questions: List<QuizQuestion>, outputStream: OutputStream) {
+    fun write(questions: List<QuizQuestion>, outputStream: OutputStream, bankName: String? = null) {
         require(questions.isNotEmpty()) { "题库中没有可导出的题目。" }
         val document = DocumentBuilderFactory.newInstance()
             .newDocumentBuilder()
             .newDocument()
         val root = document.createElement("quiz")
+        bankName?.let { root.setAttribute("title", it) }
         document.appendChild(root)
 
         questions.sortedBy { it.originalIndex }.forEach { question ->

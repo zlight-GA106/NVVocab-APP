@@ -36,6 +36,7 @@ import com.zlight106.nvvocab.domain.ProficiencyCalculator
 import com.zlight106.nvvocab.domain.FillBlankEvaluator
 import com.zlight106.nvvocab.domain.QuizXmlParser
 import com.zlight106.nvvocab.domain.QuizXmlWriter
+import com.zlight106.nvvocab.domain.QuizBankZipWriter
 import com.zlight106.nvvocab.domain.ReviewCadence
 import com.zlight106.nvvocab.domain.WrongAttemptXmlWriter
 import com.zlight106.nvvocab.domain.SessionTelemetryXmlWriter
@@ -306,6 +307,32 @@ class VocabularyRepository(
 
     suspend fun exportQuizBank(bankId: String, output: OutputStream) = withContext(Dispatchers.IO) {
         QuizXmlWriter.write(database.getQuizQuestions(bankId), output)
+    }
+
+    suspend fun exportAllQuizBanks(output: OutputStream): Int = withContext(Dispatchers.IO) {
+        val banks = database.getQuizBanks()
+        QuizBankZipWriter.write(banks, output, database::getQuizQuestions)
+        banks.size
+    }
+
+    suspend fun generateWordUsageQuestions(
+        targets: List<WordEntry>,
+        difficulty: PracticeDifficulty,
+        onProgress: (Float) -> Unit,
+    ): List<QuizQuestion> = withContext(Dispatchers.IO) {
+        val generated = aiPracticeGateway.generateWordUsageQuestions(preferences.readAiSettings(), targets, difficulty, onProgress)
+        val now = System.currentTimeMillis()
+        val name = "AI 单词用法 ${AI_BANK_TIME_FORMAT.format(Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()))}-${now % 1_000}"
+        val bank = database.replaceQuizBank(
+            parsedBank = ParsedQuizBank(name, null, generated),
+            userId = preferences.readSession()?.userId,
+            source = QuizSource.AI,
+            practiceType = null,
+            difficulty = difficulty,
+        )
+        mutableQuizBanks.value = database.getQuizBanks()
+        onLocalDataChanged()
+        database.getQuizQuestions(bank.id)
     }
 
     suspend fun recordQuizAttempt(attempt: QuizAttempt) = withContext(Dispatchers.IO) {
