@@ -135,9 +135,7 @@ internal fun EasyUpdateSettingsPanel(
             shape = CircleShape,
         ) { Text("保存更新源") }
         Button(
-            onClick = {
-                if (viewModel.saveEasyUpdateServerUrl(serverUrl)) viewModel.checkEasyUpdate()
-            },
+            onClick = { viewModel.checkEasyUpdate(serverUrl) },
             enabled = !busy,
             modifier = Modifier.fillMaxWidth(),
             shape = CircleShape,

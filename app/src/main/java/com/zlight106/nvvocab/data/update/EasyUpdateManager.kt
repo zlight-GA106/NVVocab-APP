@@ -42,7 +42,7 @@ class EasyUpdateManager(context: Context) {
                 val latestCode = metadata.getLong("latest_version_code")
                 val latestName = metadata.getString("latest_version_name")
                 require(latestCode in 1..current.longVersionCode && latestName.isNotBlank()) { "更新源返回的版本信息不一致。" }
-                mutableState.value = EasyUpdateState(EasyUpdatePhase.NO_UPDATE, "当前版本无需更新（更新源最新版本：$latestName）")
+                mutableState.value = EasyUpdateState(EasyUpdatePhase.NO_UPDATE, "当前为最新版本（${current.versionName}）")
                 return@withContext
             }
             val release = EasyUpdateRelease(

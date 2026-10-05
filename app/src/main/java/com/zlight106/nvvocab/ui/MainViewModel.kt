@@ -844,13 +844,13 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         }
     }
 
-    fun saveEasyUpdateServerUrl(serverUrl: String): Boolean = runCatching {
+    fun saveEasyUpdateServerUrl(serverUrl: String, notifyOnSuccess: Boolean = true): Boolean = runCatching {
         EasyUpdateManager.normalizeServerUrl(serverUrl)
     }.fold(
         onSuccess = { normalized ->
             preferences.saveEasyUpdateServerUrl(normalized)
             mutableEasyUpdateServerUrl.value = normalized
-            showMessage("EasyUpdate 更新源已保存")
+            if (notifyOnSuccess) showMessage("EasyUpdate 更新源已保存")
             true
         },
         onFailure = {
@@ -859,11 +859,15 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         },
     )
 
-    fun checkEasyUpdate() {
+    fun checkEasyUpdate(serverUrl: String = mutableEasyUpdateServerUrl.value) {
         if (easyUpdateState.value.phase in setOf(EasyUpdatePhase.CHECKING, EasyUpdatePhase.DOWNLOADING)) return
+        if (!saveEasyUpdateServerUrl(serverUrl, notifyOnSuccess = false)) return
         automaticallyRequestedUpdatePath = null
         viewModelScope.launch {
             easyUpdateManager.checkAndDownload(mutableEasyUpdateServerUrl.value)
+            if (easyUpdateState.value.phase == EasyUpdatePhase.NO_UPDATE) {
+                showMessage(easyUpdateState.value.message)
+            }
         }
     }
 
