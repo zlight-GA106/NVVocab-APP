@@ -1,5 +1,6 @@
 package com.zlight106.nvvocab.ui
 
+import android.content.Intent
 import android.net.Uri
 import android.os.SystemClock
 import android.provider.OpenableColumns
@@ -46,6 +47,8 @@ import com.zlight106.nvvocab.ui.screens.PracticeSessionRequest
 import com.zlight106.nvvocab.data.repository.VocabularyRepository
 import com.zlight106.nvvocab.data.local.TelemetryArchive
 import com.zlight106.nvvocab.data.local.TelemetryArchiveEntry
+import com.zlight106.nvvocab.data.update.EasyUpdateManager
+import com.zlight106.nvvocab.data.update.EasyUpdatePhase
 import com.zlight106.nvvocab.domain.WordTextParser
 import com.zlight106.nvvocab.domain.WordUsagePractice
 import com.zlight106.nvvocab.domain.AttemptAnalytics
@@ -102,6 +105,9 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     private val preferences = application.preferences
     private val telemetryArchive = TelemetryArchive(application)
     private val pausedPracticeStore = PausedPracticeStore(application)
+    private val easyUpdateManager = EasyUpdateManager(application)
+    private val mutableEasyUpdateServerUrl = MutableStateFlow(preferences.readEasyUpdateServerUrl())
+    private var automaticallyRequestedUpdatePath: String? = null
     private val repository: VocabularyRepository = application.repository
     private val mutableUiState = MutableStateFlow(readUiState())
     private val mutableContrastGenerationProgress = MutableStateFlow(0f)
@@ -115,6 +121,8 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     private val mutableAnalyzingWrongQuestionId = MutableStateFlow<String?>(null)
 
     val uiState: StateFlow<AppUiState> = mutableUiState.asStateFlow()
+    val easyUpdateServerUrl = mutableEasyUpdateServerUrl.asStateFlow()
+    val easyUpdateState = easyUpdateManager.state
     val words = repository.words
     val bookTags = repository.bookTags
     val reviewLogs = repository.reviewLogs
@@ -835,6 +843,41 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
             }
         }
     }
+
+    fun saveEasyUpdateServerUrl(serverUrl: String): Boolean = runCatching {
+        EasyUpdateManager.normalizeServerUrl(serverUrl)
+    }.fold(
+        onSuccess = { normalized ->
+            preferences.saveEasyUpdateServerUrl(normalized)
+            mutableEasyUpdateServerUrl.value = normalized
+            showMessage("EasyUpdate 更新源已保存")
+            true
+        },
+        onFailure = {
+            showMessage(it.message ?: "请输入有效的 HTTP 或 HTTPS 更新源地址")
+            false
+        },
+    )
+
+    fun checkEasyUpdate() {
+        if (easyUpdateState.value.phase in setOf(EasyUpdatePhase.CHECKING, EasyUpdatePhase.DOWNLOADING)) return
+        automaticallyRequestedUpdatePath = null
+        viewModelScope.launch {
+            easyUpdateManager.checkAndDownload(mutableEasyUpdateServerUrl.value)
+        }
+    }
+
+    fun consumeEasyUpdateAutomaticInstall(apkPath: String): Boolean {
+        if (automaticallyRequestedUpdatePath == apkPath) return false
+        automaticallyRequestedUpdatePath = apkPath
+        return true
+    }
+
+    fun canInstallEasyUpdate(): Boolean = easyUpdateManager.canInstallPackages()
+
+    fun easyUpdateInstallerIntent(): Intent = easyUpdateManager.installerIntent()
+
+    fun easyUpdateUnknownSourcesIntent(): Intent = easyUpdateManager.unknownSourcesIntent()
 
     fun saveSupabaseConfig(url: String, key: String) {
         preferences.saveSupabaseConfig(SupabaseConfig(url, key))

@@ -25,8 +25,8 @@ android {
         applicationId = "com.zlight106.nvvocab"
         minSdk = 31
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.5.0"
+        versionCode = 16
+        versionName = "1.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

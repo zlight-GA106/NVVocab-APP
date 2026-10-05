@@ -8,6 +8,15 @@ import org.json.JSONObject
 class AppPreferences(context: Context) {
     private val preferences = context.getSharedPreferences("nvvocab_preferences", Context.MODE_PRIVATE)
 
+    fun readEasyUpdateServerUrl(): String = preferences.getString(
+        KEY_EASY_UPDATE_SERVER_URL,
+        "http://192.168.95.55:19910",
+    ).orEmpty()
+
+    fun saveEasyUpdateServerUrl(serverUrl: String) {
+        preferences.edit().putString(KEY_EASY_UPDATE_SERVER_URL, serverUrl).apply()
+    }
+
     fun readSupabaseConfig(): SupabaseConfig = SupabaseConfig(
         url = preferences.getString(KEY_SUPABASE_URL, "").orEmpty().trim().trimEnd('/'),
         publishableKey = preferences.getString(KEY_SUPABASE_KEY, "").orEmpty().trim(),
@@ -577,6 +586,7 @@ class AppPreferences(context: Context) {
         const val KEY_DAILY_PROGRESS_REFERENCE = "daily_progress_reference"
         const val KEY_DAILY_REVIEW_TARGET = "daily_review_target"
         const val KEY_EMAIL = "email"
+        const val KEY_EASY_UPDATE_SERVER_URL = "easy_update_server_url"
         const val KEY_EXPIRES_AT = "expires_at"
         const val KEY_MATCHING_REMINDER = "matching_reminder"
         const val KEY_MATCHING_TARGET = "matching_question_target"

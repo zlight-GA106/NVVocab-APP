@@ -111,6 +111,7 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
         mutableStateOf(state.reminderSettings.reminderHour.toString())
     }
     val context = LocalContext.current
+    val requestEasyUpdateInstallation = rememberEasyUpdateInstallation(viewModel)
     var notificationGranted by remember {
         mutableStateOf(
             Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
@@ -145,6 +146,9 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("系统设置", style = MaterialTheme.typography.headlineMedium)
+        ExpandableSettingCard("EasyUpdate", NvvIcons.Download) {
+            EasyUpdateSettingsPanel(viewModel, requestEasyUpdateInstallation)
+        }
         ExpandableSettingCard("Supabase 节点", NvvIcons.Database) {
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),

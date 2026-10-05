@@ -11,6 +11,7 @@ NVVocab 的原生 Android 版本。项目使用 Kotlin、Jetpack Compose Materia
 - 单词用法复习：使用现有 AI 配置（默认 DeepSeek），按词库分类和搜索选定目标词，补全常见搭配、介词用法和语境例句，每词生成两道单选题；结果自动保存为题库，支持词组自动朗读及单词、例句重听
 - 对照练习首次生成的题目支持英文题干与选项喇叭朗读，选项自动播放沿用沉浸复习的开关
 - 设置中的“题库导出”可将所有题库打包为 ZIP，每个题库包含一个可重新导入的 XML，保留原题库名、题目、答案与解析
+- 设置中的“EasyUpdate”支持自定义 HTTP/HTTPS 更新源，检查新版本后自动下载，校验大小、SHA-256、包名、版本号与签名，再打开 Android 系统安装器
 - 有限队列、数量限制、分类筛选和熟练度双向排序
 - SQLite 离线词库与复习日志
 - Supabase 邮箱注册、登录、Token 刷新和 RLS 用户隔离
@@ -46,6 +47,14 @@ $env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
+
+## EasyUpdate 更新
+
+1. 在“设置 → EasyUpdate”填写并保存更新服务器地址，默认 `http://192.168.95.55:19910`，也可以粘贴该服务器的 `/admin/help` 链接。
+2. 点击“检查更新”。有新版本时自动下载，校验完成后触发系统安装器。
+3. 首次需要在 Android 系统页面允许本应用“安装未知应用”，返回后会继续安装；安装器仍需用户确认。取消后可点击“安装更新”重试。
+
+服务器采用 [EasyUpdate](https://github.com/zlight-GA106/Easyupdate) 协议，按当前运行的包名和整数版本号查询 `/api/v1/apps/{package_name}/latest?version_code=...`。测试包为 `com.zlight106.nvvocab.debug`，正式包为 `com.zlight106.nvvocab`，应分别注册对应的包名并发布同签名 APK。手机需要能够访问所填服务器；局域网源应使用手机可达的地址。
 
 ## Supabase 连接
 
