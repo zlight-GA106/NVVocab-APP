@@ -7,6 +7,7 @@ data class ParsedWord(
     val spelling: String,
     val phonetic: String,
     val translation: String,
+    val partsOfSpeech: Set<PartOfSpeech> = setOf(PartOfSpeech.UNKNOWN),
 )
 
 data class WordEntry(
@@ -23,6 +24,9 @@ data class WordEntry(
     val nextReviewAt: Long,
     val wrongCount: Int,
     val dirty: Boolean,
+    val partsOfSpeech: Set<PartOfSpeech> = setOf(PartOfSpeech.UNKNOWN),
+    val posNeedsReview: Boolean = false,
+    val posExplanation: String = "",
 ) : Serializable
 
 data class ReviewLogEntry(
@@ -166,6 +170,10 @@ data class QuizAttempt(
 )
 
 enum class PracticeAttemptMode {
+    WORD_POS_CLASSIFICATION,
+    CONTEXT_POS_CLASSIFICATION,
+    SLOT_POS_CLASSIFICATION,
+    CET4_WORD_BANK,
     WORD_DICTATION,
     WORD_SPELLING,
     QUIZ_CHOICE,
@@ -196,6 +204,9 @@ data class PracticeAttempt(
     val hintUsed: Boolean,
     val timestamp: Long,
     val dirty: Boolean,
+    val actualPos: Set<PartOfSpeech> = emptySet(),
+    val selectedPos: Set<PartOfSpeech> = emptySet(),
+    val errorType: PosErrorType? = null,
 ) : Serializable
 
 data class PracticeSessionRuntime(
@@ -551,6 +562,7 @@ enum class DictationMode {
 }
 
 enum class ReviewCategory {
+    POS,
     WORDS,
     USAGE,
     QUESTIONS,
@@ -615,9 +627,11 @@ enum class MixedReviewMode {
     CHINESE_TO_ENGLISH,
     ENGLISH_TO_CHINESE,
     ENGLISH_DEFINITION_TO_ENGLISH,
+    POS,
 }
 
 fun defaultMixedModePercentages(): Map<MixedReviewMode, Int> = mapOf(
+    MixedReviewMode.POS to 0,
     MixedReviewMode.DICTATION to 25,
     MixedReviewMode.CHINESE_TO_ENGLISH to 25,
     MixedReviewMode.ENGLISH_TO_CHINESE to 25,
@@ -627,7 +641,7 @@ fun defaultMixedModePercentages(): Map<MixedReviewMode, Int> = mapOf(
 data class MixedReviewPreferences(
     val selectedTags: Set<String> = emptySet(),
     val questionCountText: String = "50",
-    val enabledModes: Set<MixedReviewMode> = MixedReviewMode.entries.toSet(),
+    val enabledModes: Set<MixedReviewMode> = MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.toSet(),
     val modePercentages: Map<MixedReviewMode, Int> = defaultMixedModePercentages(),
     val difficulty: PracticeDifficulty = PracticeDifficulty.EASY,
     val optionCountText: String = "4",
@@ -642,7 +656,7 @@ data class MixedReviewItem(
     val contrastQuestion: ContrastQuestion? = null,
 ) : Serializable {
     val itemId: String
-        get() = paraphraseSeed?.id ?: requireNotNull(word).id
+        get() = paraphraseSeed?.id ?: if (mode == MixedReviewMode.POS) "pos-word:${requireNotNull(word).id}" else requireNotNull(word).id
 
     val sourceId: String?
         get() = paraphraseSeed?.sourceReference ?: word?.bookTag

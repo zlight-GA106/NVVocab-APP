@@ -1,6 +1,11 @@
 package com.zlight106.nvvocab.data.repository
 
 import com.zlight106.nvvocab.data.AppPreferences
+import com.zlight106.nvvocab.data.*
+import com.zlight106.nvvocab.domain.PosPractice
+import com.zlight106.nvvocab.domain.PosCodec
+import org.json.JSONObject
+import org.json.JSONArray
 import com.zlight106.nvvocab.data.AnswerEvaluationResult
 import com.zlight106.nvvocab.data.AuthSession
 import com.zlight106.nvvocab.data.ContrastPracticeSession
@@ -72,6 +77,8 @@ class VocabularyRepository(
     private val mutablePracticeAttempts = MutableStateFlow<List<PracticeAttempt>>(emptyList())
     private val mutableParaphraseSeeds = MutableStateFlow<List<ParaphraseSeed>>(emptyList())
     private val mutableLocalDataLoaded = MutableStateFlow(false)
+    private val mutablePosExercises = MutableStateFlow<List<PosExercise>>(emptyList())
+    val posExercises: StateFlow<List<PosExercise>> = mutablePosExercises.asStateFlow()
     private val practiceAttemptWriteMutex = Mutex()
 
     val words: StateFlow<List<WordEntry>> = mutableWords.asStateFlow()
@@ -97,6 +104,86 @@ class VocabularyRepository(
         mutablePracticeAttempts.value = database.getPracticeAttempts()
         mutableParaphraseSeeds.value = database.getParaphraseSeeds()
         mutableLocalDataLoaded.value = true
+        val syncedPos = database.getTitleLists().flatMap { it.questions }.mapNotNull(PosCodec::fromQuiz)
+        if (syncedPos.isNotEmpty()) database.savePosExercises(syncedPos)
+        mutablePosExercises.value = database.getPosExercises()
+    }
+
+    suspend fun annotatePos(targets: List<WordEntry>, onlyUnknown: Boolean, forceAi: Boolean = false, progress: (Float) -> Unit): Int = withContext(Dispatchers.IO) {
+        val settings = preferences.readPosSettings()
+        val scoped = targets.distinctBy { it.id }.filter { !onlyUnknown || it.partsOfSpeech == setOf(PartOfSpeech.UNKNOWN) || it.posNeedsReview }
+        val local = if (forceAi) emptyList() else scoped.filter { it.partsOfSpeech == setOf(PartOfSpeech.UNKNOWN) && PosPractice.translationParts(it.translation) != setOf(PartOfSpeech.UNKNOWN) }
+        local.forEach { database.updateWordPos(it.id, PosPractice.translationParts(it.translation), false, it.posExplanation.ifBlank { it.translation }) }
+        val batches = scoped.filterNot { word -> local.any { it.id == word.id } }.distinctBy { it.spelling }.chunked(settings.batchSize)
+        var updated = local.size
+        refreshLocal()
+        batches.forEachIndexed { index, batch ->
+            val raw = aiPracticeGateway.requestPos(preferences.readAiSettings(), settings.annotationPrompt,
+                posInput(batch).put("includeExplanation", settings.autoExplanation || forceAi))
+            val annotations = PosPractice.parseAnnotations(raw, batch)
+            // Parse the complete batch before any writes; failed/invalid requests retain old data.
+            annotations.forEach { a -> scoped.filter { it.spelling == a.word }.forEach { word ->
+                database.updateWordPos(word.id, a.parts, a.confidence < 0.8 || PartOfSpeech.UNKNOWN in a.parts,
+                    if (settings.autoExplanation || forceAi) a.explanation else word.posExplanation)
+                updated++
+            } }
+            refreshLocal(); progress((index + 1f) / batches.size)
+        }
+        onLocalDataChanged()
+        updated
+    }
+
+    suspend fun confirmWordPos(word: WordEntry, parts: Set<PartOfSpeech>) = withContext(Dispatchers.IO) {
+        require(parts.isNotEmpty()) { "请至少选择一个词性" }
+        database.updateWordPos(word.id, parts, false, word.posExplanation)
+        refreshLocal(); onLocalDataChanged()
+    }
+
+    suspend fun generatePos(mode: PosMode, targets: List<WordEntry>, count: Int, progress: (Float) -> Unit): List<PosExercise> = withContext(Dispatchers.IO) {
+        val settings = preferences.readPosSettings()
+        val eligible = targets.filter(PosPractice::eligible).distinctBy { it.id }
+        require(eligible.isNotEmpty()) { "没有已确认词性的词条，请先自动识别或复核词性" }
+        val generated = if (mode == PosMode.CET4) {
+            val distinctWords = eligible.distinctBy { it.spelling.lowercase() }
+            require(distinctWords.size >= 15) { "CET-4 模拟至少需要15个不同的已标注单词" }
+            require(distinctWords.flatMap { PosPractice.core(it.partsOfSpeech) }.toSet().containsAll(PartOfSpeech.core)) {
+                "当前范围需要同时包含 N / V / Adj / Adv，请扩大词库范围或先补充词性标注"
+            }
+            val coverage = PartOfSpeech.core.map { part -> distinctWords.filter { part in it.partsOfSpeech }.random() }.distinctBy { it.id }
+            val cetTargets = (coverage + distinctWords.filterNot { word -> coverage.any { it.id == word.id } }.shuffled()).take(60)
+            listOf(PosPractice.parseCet4(aiPracticeGateway.requestPos(preferences.readAiSettings(), settings.cet4Prompt,
+                posInput(cetTargets)), cetTargets, cetTargets.map { it.bookTag }.distinct().joinToString(" / ")))
+        } else {
+            val batches = eligible.shuffled().take(count).chunked(minOf(settings.batchSize, 10))
+            batches.flatMapIndexed { index, batch ->
+                val prompt = if (mode == PosMode.CONTEXT) settings.contextPrompt else settings.slotPrompt
+                val qs = PosPractice.parseQuestions(aiPracticeGateway.requestPos(preferences.readAiSettings(), prompt, posInput(batch)), mode, batch)
+                progress((index + 1f) / batches.size)
+                qs
+            }
+        }
+        database.replaceQuizBank(ParsedQuizBank("${mode.label} ${LocalDate.now()}-${UUID.randomUUID().toString().take(8)}", null, generated.mapIndexed { i, q -> PosCodec.toQuiz(q, i) }),
+            preferences.readSession()?.userId, QuizSource.AI)
+        database.savePosExercises(generated)
+        refreshLocal(); onLocalDataChanged(); progress(1f)
+        generated
+    }
+
+    private fun posInput(words: List<WordEntry>): JSONObject = JSONObject().put("words", JSONArray().apply {
+        words.forEach { word -> put(JSONObject().put("id", word.id).put("word", word.spelling).put("translation", word.translation)
+            .put("phonetic", word.phonetic.orEmpty()).put("pos", JSONArray(word.partsOfSpeech.map { it.name }))) }
+    })
+
+    suspend fun recordPosSession(exercises: List<PosExercise>, attempts: List<PracticeAttempt>) = withContext(Dispatchers.IO) {
+        recordPracticeAttempts(attempts)
+        database.recordWrongQuestionResults(attempts.map { PosPractice.wrongResult(it) }, preferences.readSession()?.userId)
+        val sourceWords = exercises.associateBy { it.id }
+        val wordResults = attempts.mapNotNull { a ->
+            val wordId = sourceWords[a.itemId]?.sourceWordId ?: a.itemId.takeIf { it.startsWith("pos-word:") }?.removePrefix("pos-word:") ?: exercises.asSequence().flatMap { q -> q.blanks.asSequence().map { q to it } }
+                .firstOrNull { (q, b) -> "${q.id}:${b.index}" == a.itemId }?.let { (q, b) -> q.candidates.first { it.id == b.answerId }.wordId }
+            mutableWords.value.firstOrNull { it.id == wordId }?.let { WordReviewResult(it, if (a.correct) 5 else 0) }
+        }
+        recordReviewSession(wordResults.groupBy { it.word.id }.values.map { rows -> rows.minBy { it.quality } }); refreshLocal(); onLocalDataChanged()
     }
 
     suspend fun recordPracticeAttempts(attempts: List<PracticeAttempt>) = withContext(Dispatchers.IO) {
@@ -196,6 +283,7 @@ class VocabularyRepository(
                 spelling = word.spelling,
                 phonetic = word.phonetic.ifBlank { null },
                 translation = word.translation,
+                partsOfSpeech = if (word.partsOfSpeech == setOf(PartOfSpeech.UNKNOWN)) PosPractice.translationParts(word.translation) else word.partsOfSpeech,
                 bookTag = normalizedTag,
                 introTime = now + index,
                 repetitions = 0,
@@ -607,23 +695,22 @@ class VocabularyRepository(
             gateway.deleteParaphraseSeeds(config, session, deletedParaphraseSeedIds)
         }.isSuccess
         if (paraphraseDeletesUploaded) database.clearDeletedParaphraseSeeds(deletedParaphraseSeedIds)
-        gateway.upsertWords(config, session, dirtyWords)
+        val posWordsUploaded = gateway.upsertWords(config, session, dirtyWords)
         gateway.upsertReviewLogs(config, session, dirtyLogs)
         gateway.upsertTitleLists(config, session, dirtyTitleLists)
         gateway.upsertWrongQuestions(config, session, dirtyWrongQuestions)
-        val attemptsUploaded = runCatching {
-            gateway.upsertPracticeAttempts(config, session, dirtyPracticeAttempts)
-        }.isSuccess
+        val uploadedAttemptIds = mutableListOf<String>()
+        dirtyPracticeAttempts.groupBy { it.mode in PosPractice.modes }.values.forEach { group ->
+            if (runCatching { gateway.upsertPracticeAttempts(config, session, group) }.isSuccess) uploadedAttemptIds.addAll(group.map { it.id })
+        }
         val paraphraseSeedsUploaded = runCatching {
             gateway.upsertParaphraseSeeds(config, session, dirtyParaphraseSeeds)
         }.isSuccess
-        database.markWordsClean(dirtyWords.map(WordEntry::id))
+        database.markWordsClean(dirtyWords.filter { posWordsUploaded || it.partsOfSpeech == setOf(PartOfSpeech.UNKNOWN) }.map(WordEntry::id))
         database.markReviewLogsClean(dirtyLogs.map { it.id })
         database.markTitleListsClean(dirtyTitleLists.map { it.id })
         database.markWrongQuestionsClean(dirtyWrongQuestions.map { it.id })
-        if (attemptsUploaded) {
-            database.markPracticeAttemptsClean(dirtyPracticeAttempts.map(PracticeAttempt::id))
-        }
+        database.markPracticeAttemptsClean(uploadedAttemptIds)
         if (paraphraseSeedsUploaded) {
             database.markParaphraseSeedsClean(dirtyParaphraseSeeds.map(ParaphraseSeed::id))
         }
@@ -635,13 +722,13 @@ class VocabularyRepository(
             downloadedTitleLists = remoteTitleLists.size,
             downloadedWrongQuestions = remoteWrongQuestions.size,
             downloadedWords = remoteWords.size,
-            uploadedAttempts = if (attemptsUploaded) dirtyPracticeAttempts.size else 0,
+            uploadedAttempts = uploadedAttemptIds.size,
             uploadedLogs = dirtyLogs.size,
             uploadedTitleLists = dirtyTitleLists.size,
             uploadedWrongQuestions = dirtyWrongQuestions.size,
             uploadedWords = dirtyWords.size,
             uploadedParaphraseSeeds = if (paraphraseSeedsUploaded) dirtyParaphraseSeeds.size else 0,
-            pendingAttempts = if (attemptsUploaded) 0 else dirtyPracticeAttempts.size,
+            pendingAttempts = dirtyPracticeAttempts.size - uploadedAttemptIds.size,
         )
     }
 

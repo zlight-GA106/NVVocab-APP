@@ -242,6 +242,7 @@ fun LexiconScreen(
                     ) {
                         row.forEach { word ->
                             WordPreviewCard(
+                                viewModel = viewModel,
                                 modifier = Modifier.weight(1f),
                                 word = word,
                                 number = chronologicalNumbers[word.id] ?: 0,
@@ -314,6 +315,7 @@ private fun LexiconSortDropdown(
 
 @Composable
 private fun WordPreviewCard(
+    viewModel: MainViewModel,
     word: WordEntry,
     number: Int,
     maturities: List<ItemMaturitySnapshot>,
@@ -369,6 +371,7 @@ private fun WordPreviewCard(
                 }
             }
             Text(word.translation, style = MaterialTheme.typography.bodyLarge)
+            com.zlight106.nvvocab.ui.components.PosWordLabels(word, viewModel)
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.secondaryContainer,
@@ -414,6 +417,10 @@ private fun WordPreviewCard(
 }
 
 private fun PracticeAttemptMode.shortName(): String = when (this) {
+    PracticeAttemptMode.WORD_POS_CLASSIFICATION -> "词性速判"
+    PracticeAttemptMode.CONTEXT_POS_CLASSIFICATION -> "语境词性"
+    PracticeAttemptMode.SLOT_POS_CLASSIFICATION -> "空位词性"
+    PracticeAttemptMode.CET4_WORD_BANK -> "CET-4 选词填空"
     PracticeAttemptMode.WORD_DICTATION -> "默写"
     PracticeAttemptMode.WORD_SPELLING -> "拼写"
     PracticeAttemptMode.QUIZ_CHOICE -> "选择"

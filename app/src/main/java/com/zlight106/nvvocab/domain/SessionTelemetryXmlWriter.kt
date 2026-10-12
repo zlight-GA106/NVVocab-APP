@@ -67,6 +67,9 @@ object SessionTelemetryXmlWriter {
         element("item_id", attempt.itemId)
         element("source_id", attempt.sourceId.orEmpty())
         element("mode", attempt.mode.name)
+        if (attempt.actualPos.isNotEmpty()) element("actual_pos", com.zlight106.nvvocab.data.PartOfSpeech.encode(attempt.actualPos))
+        if (attempt.selectedPos.isNotEmpty()) element("selected_pos", com.zlight106.nvvocab.data.PartOfSpeech.encode(attempt.selectedPos))
+        attempt.errorType?.let { element("error_type", it.name) }
         element("question", attempt.question)
         if (attempt.options.isNotEmpty()) {
             startTag(null, "options")

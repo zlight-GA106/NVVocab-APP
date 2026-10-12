@@ -8,6 +8,30 @@ import org.json.JSONObject
 class AppPreferences(context: Context) {
     private val preferences = context.getSharedPreferences("nvvocab_preferences", Context.MODE_PRIVATE)
 
+    fun readPosSettings(): PosSettings {
+        val q = runCatching { JSONObject(preferences.getString("pos_settings", "{}").orEmpty()) }.getOrElse { JSONObject() }
+        return PosSettings(q.optInt("count", 20).coerceIn(1, 200), q.optInt("time", 0).takeIf { it in setOf(0, 3, 5) } ?: 0,
+            q.optBoolean("complete"), q.optInt("batch", 30).coerceIn(30, 100), q.optBoolean("explain", true),
+            q.optBoolean("mixed"), q.optBoolean("unknown"),
+            q.optString("annotation", POS_ANNOTATION_PROMPT).ifBlank { POS_ANNOTATION_PROMPT },
+            q.optString("context", POS_CONTEXT_PROMPT).ifBlank { POS_CONTEXT_PROMPT },
+            q.optString("slot", POS_SLOT_PROMPT).ifBlank { POS_SLOT_PROMPT },
+            q.optString("cet4", POS_CET4_PROMPT).ifBlank { POS_CET4_PROMPT })
+    }
+
+    fun readPosDraft(session: String): String = preferences.getString("pos_draft_$session", "{}").orEmpty()
+    fun savePosDraft(session: String, draft: String) { preferences.edit().putString("pos_draft_$session", draft).apply() }
+    fun clearPosDraft(session: String) { preferences.edit().remove("pos_draft_$session").apply() }
+
+    fun savePosSettings(settings: PosSettings) {
+        val q = JSONObject().put("count", settings.questionCount).put("time", settings.timeLimitSeconds)
+            .put("complete", settings.completeMode).put("batch", settings.batchSize).put("explain", settings.autoExplanation)
+            .put("mixed", settings.mixedEnabled).put("unknown", settings.autoUnknown)
+            .put("annotation", settings.annotationPrompt).put("context", settings.contextPrompt)
+            .put("slot", settings.slotPrompt).put("cet4", settings.cet4Prompt)
+        preferences.edit().putString("pos_settings", q.toString()).apply()
+    }
+
     fun readEasyUpdateServerUrl(): String = preferences.getString(
         KEY_EASY_UPDATE_SERVER_URL,
         "http://192.168.95.55:19910",
@@ -283,10 +307,10 @@ class AppPreferences(context: Context) {
     fun readMixedReviewPreferences(): MixedReviewPreferences {
         val enabledModes = preferences.getStringSet(
             KEY_MIXED_REVIEW_ENABLED_MODES,
-            MixedReviewMode.entries.map(MixedReviewMode::name).toSet(),
+            MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.map(MixedReviewMode::name).toSet(),
         ).orEmpty().mapNotNull { name ->
             runCatching { MixedReviewMode.valueOf(name) }.getOrNull()
-        }.toSet().ifEmpty { MixedReviewMode.entries.toSet() }
+        }.toSet().ifEmpty { MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.toSet() }
         val defaults = defaultMixedModePercentages()
         val percentages = MixedReviewMode.entries.associateWith { mode ->
             preferences.getInt(mixedModePercentageKey(mode), defaults.getValue(mode)).coerceIn(0, 100)

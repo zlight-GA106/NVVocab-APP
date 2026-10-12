@@ -247,7 +247,7 @@ fun MixedReviewPanel(
                 )
 
                 Text("模式比例", style = MaterialTheme.typography.titleMedium)
-                MixedReviewMode.entries.forEach { mode ->
+                MixedReviewMode.entries.filter { it != MixedReviewMode.POS || viewModel.posSettings.mixedEnabled }.forEach { mode ->
                     MixedModeRatioRow(
                         mode = mode,
                         enabled = mode in enabledModes,
@@ -390,6 +390,7 @@ private fun MixedModeRatioRow(
 }
 
 private fun MixedReviewMode.displayName(): String = when (this) {
+    MixedReviewMode.POS -> "词性判断"
     MixedReviewMode.DICTATION -> "默写"
     MixedReviewMode.CHINESE_TO_ENGLISH -> "中翻英"
     MixedReviewMode.ENGLISH_TO_CHINESE -> "英翻中"
@@ -397,6 +398,7 @@ private fun MixedReviewMode.displayName(): String = when (this) {
 }
 
 private fun MixedReviewMode.description(): String = when (this) {
+    MixedReviewMode.POS -> "N / V / Adj / Adv 本地速判，支持一词多性"
     MixedReviewMode.DICTATION -> "根据中文释义输入英文单词"
     MixedReviewMode.CHINESE_TO_ENGLISH -> "中文题干选择英文单词"
     MixedReviewMode.ENGLISH_TO_CHINESE -> "英文单词选择中文释义"

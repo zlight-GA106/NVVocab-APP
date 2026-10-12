@@ -146,6 +146,7 @@ fun SettingsScreen(viewModel: MainViewModel, state: AppUiState, quizBanks: List<
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("系统设置", style = MaterialTheme.typography.headlineMedium)
+        ExpandableSettingCard("词性专项 / CET-4", NvvIcons.BookOpen) { PosSettingsPanel(viewModel) }
         ExpandableSettingCard("EasyUpdate", NvvIcons.Download) {
             EasyUpdateSettingsPanel(viewModel, requestEasyUpdateInstallation)
         }

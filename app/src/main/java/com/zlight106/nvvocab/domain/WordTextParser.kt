@@ -22,6 +22,7 @@ object WordTextParser {
                 spelling = match.groupValues[1].trim(),
                 phonetic = (match.groupValues[2].ifBlank { match.groupValues[3] }).trim(),
                 translation = match.groupValues[4].trim(),
+                partsOfSpeech = PosPractice.translationParts(match.groupValues[4]),
             )
         }
 
@@ -30,6 +31,7 @@ object WordTextParser {
                 spelling = match.groupValues[1].trim(),
                 phonetic = "",
                 translation = match.groupValues[2].trim(),
+                partsOfSpeech = PosPractice.translationParts(match.groupValues[2]),
             )
         }
 
@@ -40,6 +42,7 @@ object WordTextParser {
             spelling = parts[0],
             phonetic = "",
             translation = parts[1],
+            partsOfSpeech = PosPractice.translationParts(parts[1]),
         )
     }
 }

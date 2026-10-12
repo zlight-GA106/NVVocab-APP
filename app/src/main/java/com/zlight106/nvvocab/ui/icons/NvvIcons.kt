@@ -18,6 +18,7 @@ object NvvIcons {
     val BrainCircuit = lucide("brain-circuit", "M9.5 4.5A3 3 0 0 0 4 6v1.5A3.5 3.5 0 0 0 3 14v1a4 4 0 0 0 4 4h1 M14.5 4.5A3 3 0 0 1 20 6v1.5a3.5 3.5 0 0 1 1 6.5v1a4 4 0 0 1-4 4h-1 M8 9h3v3 M16 9h-3v6 M8 18v-3h3 M16 18v-3h-3")
     val Bot = lucide("bot", "M12 8V4H8 M2 14h2 M20 14h2 M15 13v2 M9 13v2 M6 8h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2z")
     val Check = lucide("check", "M20 6 9 17l-5-5")
+    val Clock = lucide("clock", "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M12 6v6l4 2")
     val ChevronDown = lucide("chevron-down", "m6 9 6 6 6-6")
     val CirclePlus = lucide("circle-plus", "M8 12h8 M12 8v8 M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0z")
     val Cloud = lucide("cloud", "M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 1 1 0 9z")

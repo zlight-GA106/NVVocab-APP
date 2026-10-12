@@ -30,6 +30,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.PosMode
+import com.zlight106.nvvocab.data.PartOfSpeech
+import com.zlight106.nvvocab.data.PosErrorType
+import com.zlight106.nvvocab.domain.PosPractice
 import com.zlight106.nvvocab.data.QuizQuestionType
 import com.zlight106.nvvocab.data.WrongQuestionSort
 import com.zlight106.nvvocab.data.WrongQuestionSource
@@ -67,6 +71,15 @@ fun WrongBookPanel(
     onStartSession: (PracticeSessionRequest) -> Unit,
 ) {
     val entries by viewModel.wrongQuestions.collectAsStateWithLifecycle()
+    val posCache by viewModel.posExercises.collectAsStateWithLifecycle()
+    val posAttempts by viewModel.practiceAttempts.collectAsStateWithLifecycle()
+    val posTags by viewModel.bookTags.collectAsStateWithLifecycle()
+    var posTag by remember { mutableStateOf<String?>(null) }
+    var practiceType by remember { mutableStateOf("全部") }
+    var posPair by remember { mutableStateOf("全部词性") }
+    var onlyPosError by remember { mutableStateOf(false) }
+    var selectedCetSetId by remember { mutableStateOf<String?>(null) }
+    val posModeNames = PosMode.entries.map { it.attemptMode.name }.toSet()
     val analyzingId by viewModel.analyzingWrongQuestionId.collectAsStateWithLifecycle()
     var view by remember { mutableStateOf(WrongBookView.ERRORS) }
     var sort by remember { mutableStateOf(WrongQuestionSort.WRONG_COUNT) }
@@ -86,9 +99,19 @@ fun WrongBookPanel(
             selectedGroupKey = null
         }
     }
-    val visible = remember(timeFilteredEntries, sort, selectedGroupKey) {
+    val visible = remember(timeFilteredEntries, sort, selectedGroupKey, practiceType, posPair, onlyPosError, posAttempts, posTag) {
         timeFilteredEntries.asSequence()
             .filter { selectedGroupKey == null || WrongQuestionGrouping.keyOf(it) == selectedGroupKey }
+            .filter { entry ->
+                val posMode = PosMode.entries.firstOrNull { it.attemptMode.name == entry.category }
+                val latest = posAttempts.filter { it.itemId == entry.questionKey }.maxByOrNull { it.timestamp }
+                val pair = when (posPair) { "只练 Adj / Adv" -> setOf(PartOfSpeech.ADJECTIVE, PartOfSpeech.ADVERB)
+                    "只练 N / V" -> setOf(PartOfSpeech.NOUN, PartOfSpeech.VERB); else -> PartOfSpeech.core.toSet() }
+                (practiceType == "全部" || posMode?.label == practiceType) &&
+                    (posTag == null || latest?.sourceId?.split(" / ")?.contains(posTag) == true) &&
+                    (posPair == "全部词性" || latest?.actualPos?.any { it in pair } == true) &&
+                    (!onlyPosError || latest?.errorType in setOf(PosErrorType.POS_WRONG, PosErrorType.MULTI_POS_CONFUSION))
+            }
             .let { sequence ->
                 when (sort) {
                     WrongQuestionSort.LATEST -> sequence.sortedByDescending(WrongQuestionEntry::lastWrongAt)
@@ -100,11 +123,45 @@ fun WrongBookPanel(
             .toList()
     }
     val visibleGroups = remember(visible) { WrongQuestionGrouping.group(visible) }
+    val cetSets = posCache.filter { q -> q.mode == PosMode.CET4 && visible.any { it.questionKey.startsWith(q.id + ":") } }
+    val currentCetSetId = selectedCetSetId?.takeIf { id -> cetSets.any { it.id == id } } ?: cetSets.firstOrNull()?.id
+    fun startVisible() {
+        val posEntries = visible.filter { it.category in posModeNames }
+        val ordinary = visible.filterNot { it.category in posModeNames }
+        if (ordinary.isNotEmpty()) onStartSession(PracticeSessionRequest.WrongBook(ordinary))
+        else {
+            val questions = posCache.filter { q -> posEntries.any { it.questionKey == q.id || it.questionKey.startsWith(q.id + ":") } }
+                .toMutableList()
+            val words = viewModel.words.value
+            posEntries.filter { it.category == PosMode.DRILL.attemptMode.name }.forEach { entry ->
+                words.firstOrNull { "pos-word:${it.id}" == entry.questionKey }?.let { word -> if (PosPractice.eligible(word)) questions.add(PosPractice.drill(word)) }
+            }
+            if (questions.isNotEmpty()) {
+                val unique = questions.distinctBy { it.id }
+                if (unique.first().mode == PosMode.CET4) {
+                    val set = unique.firstOrNull { it.id == currentCetSetId } ?: unique.first()
+                    val focus = set.blanks.filter { b -> posEntries.any { it.questionKey == "${set.id}:${b.index}" } }.map { it.index }.toSet()
+                    onStartSession(PracticeSessionRequest.Pos(listOf(set), focusBlanks = focus))
+                } else onStartSession(PracticeSessionRequest.Pos(unique, viewModel.posSettings.completeMode))
+            }
+            else viewModel.notifyUser("请先同步或生成对应的词性题目缓存")
+        }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SectionCard {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("错题本", style = MaterialTheme.typography.titleLarge)
+                NvvDropdown("专项类型", practiceType, (listOf("全部") + PosMode.entries.map { it.label }).map { it to it }, NvvIcons.BookOpen, { practiceType = it })
+                if (practiceType == PosMode.CET4.label && cetSets.isNotEmpty()) {
+                    NvvDropdown("模拟题套次", currentCetSetId, cetSets.map { q ->
+                        q.id to "${q.sourceTag} · ${q.sentence.take(50)} · ${visible.count { it.questionKey.startsWith(q.id + ":") }}个错题空位"
+                    }, NvvIcons.FileQuestion, { selectedCetSetId = it })
+                }
+                NvvDropdown("词性词库", posTag, listOf(null to "全部词库") + posTags.map { it to it }, NvvIcons.BookOpen, { posTag = it })
+                NvvDropdown("词性范围", posPair, listOf("全部词性", "只练 Adj / Adv", "只练 N / V").map { it to it }, NvvIcons.BookOpen, { posPair = it })
+                PosToggle("只练词性判断错误", onlyPosError) { onlyPosError = it }
+                if (practiceType == "全部" && visible.any { it.category in posModeNames }) Text("词性错题请先选专项类型，再使用下方按钮重练。")
                 Text(
                     "按题目累计正确与错误次数，收藏题目可形成独立复习清单。",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -130,13 +187,13 @@ fun WrongBookPanel(
                             WrongTimeDropdown(timeRange, { timeRange = it })
                             WrongSortDropdown(sort, { sort = it })
                             Button(
-                                onClick = { onStartSession(PracticeSessionRequest.WrongBook(visible)) },
-                                enabled = visible.isNotEmpty(),
+                                onClick = ::startVisible,
+                                enabled = visible.isNotEmpty() && (practiceType != "全部" || visible.any { it.category !in posModeNames }),
                                 shape = CircleShape,
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Icon(NvvIcons.Play, null)
-                                Text("复习当前清单", Modifier.padding(start = 8.dp))
+                                Text(if (practiceType == "全部" && visible.any { it.category in posModeNames }) "复习普通错题清单" else "复习当前清单", Modifier.padding(start = 8.dp))
                             }
                         }
                     } else {
@@ -153,12 +210,12 @@ fun WrongBookPanel(
                             WrongTimeDropdown(timeRange, { timeRange = it }, Modifier.weight(1f))
                             WrongSortDropdown(sort, { sort = it }, Modifier.weight(1f))
                             Button(
-                                onClick = { onStartSession(PracticeSessionRequest.WrongBook(visible)) },
-                                enabled = visible.isNotEmpty(),
+                                onClick = ::startVisible,
+                                enabled = visible.isNotEmpty() && (practiceType != "全部" || visible.any { it.category !in posModeNames }),
                                 shape = CircleShape,
                             ) {
                                 Icon(NvvIcons.Play, null)
-                                Text("复习当前清单", Modifier.padding(start = 8.dp))
+                                Text(if (practiceType == "全部" && visible.any { it.category in posModeNames }) "复习普通错题清单" else "复习当前清单", Modifier.padding(start = 8.dp))
                             }
                         }
                     }

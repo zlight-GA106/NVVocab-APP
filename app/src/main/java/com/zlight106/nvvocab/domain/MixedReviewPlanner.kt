@@ -43,36 +43,44 @@ object MixedReviewPlanner {
             "语义压缩练习至少需要两条可用种子"
         }
 
-        val totalAvailable = selectedWords.size + if (semanticEnabled) selectedSeeds.size else 0
+        val ordinaryModes = MixedReviewMode.entries.filter { it in enabledModes && it != semanticMode && it != MixedReviewMode.POS }
+        val knownWords = selectedWords.filter(PosPractice::eligible)
+        val wordCapacity = if (ordinaryModes.isNotEmpty()) selectedWords.size else if (MixedReviewMode.POS in enabledModes) knownWords.size else 0
+        val totalAvailable = wordCapacity + if (semanticEnabled) selectedSeeds.size else 0
         val actualCount = requestedCount.coerceAtMost(totalAvailable)
         require(actualCount > 0) { "所选范围内没有可复习内容" }
         val modeCounts = allocateCounts(actualCount, enabledModes, percentages).toMutableMap()
-
-        val semanticRequested = modeCounts[semanticMode] ?: 0
-        val semanticCount = semanticRequested.coerceAtMost(selectedSeeds.size)
-        modeCounts[semanticMode] = semanticCount
-        var wordCount = modeCounts.filterKeys { it != semanticMode }.values.sum()
-        val missing = actualCount - semanticCount - wordCount
-        if (missing > 0) {
-            val fallbackModes = MixedReviewMode.entries.filter { it in enabledModes && it != semanticMode }
-            require(fallbackModes.isNotEmpty() && selectedWords.size >= wordCount + missing) {
-                "当前词库或语义压缩种子不足以生成指定题量"
-            }
-            repeat(missing) { offset ->
-                val mode = fallbackModes[offset % fallbackModes.size]
-                modeCounts[mode] = modeCounts.getOrDefault(mode, 0) + 1
-            }
-            wordCount += missing
+        val posRequested = modeCounts.getOrDefault(MixedReviewMode.POS, 0)
+        modeCounts[MixedReviewMode.POS] = posRequested.coerceAtMost(knownWords.size)
+        modeCounts[semanticMode] = modeCounts.getOrDefault(semanticMode, 0).coerceAtMost(selectedSeeds.size)
+        var wordCount = modeCounts.getValue(MixedReviewMode.POS)
+        ordinaryModes.forEach { mode ->
+            modeCounts[mode] = modeCounts.getOrDefault(mode, 0).coerceAtMost(selectedWords.size - wordCount)
+            wordCount += modeCounts.getValue(mode)
         }
-        require(selectedWords.size >= wordCount) { "当前词库中的不同单词数量不足" }
+        var missing = actualCount - modeCounts.values.sum()
+        while (missing > 0) {
+            val fallback = when {
+                ordinaryModes.isNotEmpty() && wordCount < selectedWords.size -> ordinaryModes[(actualCount - missing) % ordinaryModes.size]
+                MixedReviewMode.POS in enabledModes && modeCounts.getValue(MixedReviewMode.POS) < knownWords.size && wordCount < selectedWords.size -> MixedReviewMode.POS
+                semanticEnabled && modeCounts.getValue(semanticMode) < selectedSeeds.size -> semanticMode
+                else -> error("当前范围可用内容不足")
+            }
+            modeCounts[fallback] = modeCounts.getOrDefault(fallback, 0) + 1
+            if (fallback != semanticMode) wordCount++
+            missing--
+        }
+        val posWords = knownWords.take(modeCounts.getValue(MixedReviewMode.POS))
+        val semanticCount = modeCounts.getValue(semanticMode)
 
         val wordModes = buildList {
-            MixedReviewMode.entries.filter { it != semanticMode }.forEach { mode ->
+            MixedReviewMode.entries.filter { it != semanticMode && it != MixedReviewMode.POS }.forEach { mode ->
                 repeat(modeCounts[mode] ?: 0) { add(mode) }
             }
         }.shuffled(random)
         val items = buildList {
-            selectedWords.take(wordModes.size).zip(wordModes).forEach { (word, mode) ->
+            posWords.forEach { word -> add(MixedReviewItem(word = word, mode = MixedReviewMode.POS)) }
+            selectedWords.filterNot { word -> posWords.any { it.id == word.id } }.take(wordModes.size).zip(wordModes).forEach { (word, mode) ->
                 add(MixedReviewItem(word = word, mode = mode))
             }
             selectedSeeds.take(semanticCount).forEach { seed ->

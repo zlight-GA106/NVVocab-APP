@@ -126,6 +126,7 @@ fun DictateScreen(
             label = "review-category",
         ) { selectedCategory ->
             when (selectedCategory) {
+                ReviewCategory.POS -> PosTrainingPanel(viewModel, words, tags, onStartSession)
                 ReviewCategory.WORDS -> WordReviewPanel(
                     viewModel = viewModel,
                     tags = tags,
@@ -194,6 +195,7 @@ private fun ReviewCategorySegment(
     modifier: Modifier,
 ) {
     val label = when (category) {
+        ReviewCategory.POS -> "词性专项"
         ReviewCategory.WORDS -> "单词复习"
         ReviewCategory.USAGE -> "单词用法复习"
         ReviewCategory.QUESTIONS -> "题库练习"
@@ -202,6 +204,7 @@ private fun ReviewCategorySegment(
         ReviewCategory.WRONG_BOOK -> "错题本"
     }
     val icon = when (category) {
+        ReviewCategory.POS -> NvvIcons.BookOpen
         ReviewCategory.WORDS -> NvvIcons.BrainCircuit
         ReviewCategory.USAGE -> NvvIcons.BookOpen
         ReviewCategory.QUESTIONS -> NvvIcons.FileQuestion

@@ -14,6 +14,8 @@ import com.zlight106.nvvocab.data.ReviewLogEntry
 import com.zlight106.nvvocab.data.SupabaseConfig
 import com.zlight106.nvvocab.data.TitleListEntry
 import com.zlight106.nvvocab.data.WordEntry
+import com.zlight106.nvvocab.data.PartOfSpeech
+import com.zlight106.nvvocab.data.PosErrorType
 import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.data.WrongQuestionSource
 import java.net.HttpURLConnection
@@ -78,8 +80,8 @@ class SupabaseGateway {
         config: SupabaseConfig,
         session: AuthSession,
         words: List<WordEntry>,
-    ) = withContext(Dispatchers.IO) {
-        if (words.isEmpty()) return@withContext
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (words.isEmpty()) return@withContext true
         val payload = JSONArray()
         words.forEach { word ->
             payload.put(
@@ -87,6 +89,9 @@ class SupabaseGateway {
                     .put("id", word.id)
                     .put("user_id", session.userId)
                     .put("words", word.spelling)
+                    .put("parts_of_speech", PartOfSpeech.encode(word.partsOfSpeech))
+                    .put("pos_needs_review", word.posNeedsReview)
+                    .put("pos_explanation", word.posExplanation)
                     .put("phonetic", word.phonetic ?: JSONObject.NULL)
                     .put("translate", word.translation)
                     .put("book_tag", word.bookTag)
@@ -98,14 +103,23 @@ class SupabaseGateway {
                     .put("wrong_count", word.wrongCount),
             )
         }
-        request(
+        try { request(
             config = config,
             path = "/rest/v1/wordbase?on_conflict=id",
             method = "POST",
             body = payload.toString(),
             accessToken = session.accessToken,
             prefer = "resolution=merge-duplicates,return=minimal",
-        )
+        ); true } catch (e: Exception) {
+            if (e.message.orEmpty().let { message -> !message.contains("parts_of_speech") && !message.contains("pos_needs_review") && !message.contains("pos_explanation") }) throw e
+            for (i in 0 until payload.length()) {
+                val item = payload.getJSONObject(i)
+                item.remove("parts_of_speech"); item.remove("pos_needs_review"); item.remove("pos_explanation")
+            }
+            request(config, "/rest/v1/wordbase?on_conflict=id", "POST", payload.toString(), session.accessToken,
+                "resolution=merge-duplicates,return=minimal")
+            false
+        }
     }
 
     suspend fun upsertReviewLogs(
@@ -139,7 +153,7 @@ class SupabaseGateway {
         withContext(Dispatchers.IO) {
             val response = request(
                 config = config,
-                path = "/rest/v1/wordbase?select=id,user_id,words,phonetic,translate,book_tag,introtime,repetitions,interval,easiness,next_review_at,wrong_count&order=introtime.asc",
+                path = "/rest/v1/wordbase?select=*&order=introtime.asc",
                 method = "GET",
                 accessToken = session.accessToken,
             )
@@ -152,6 +166,9 @@ class SupabaseGateway {
                             id = item.getString("id"),
                             userId = item.optString("user_id").ifBlank { session.userId },
                             spelling = item.getString("words"),
+                            partsOfSpeech = PartOfSpeech.decode(item.optString("parts_of_speech")),
+                            posNeedsReview = item.optBoolean("pos_needs_review"),
+                            posExplanation = item.optString("pos_explanation"),
                             phonetic = item.optNullableString("phonetic"),
                             translation = item.getString("translate"),
                             bookTag = item.optString("book_tag", "未分类"),
@@ -463,6 +480,11 @@ class SupabaseGateway {
                     .put("item_id", attempt.itemId)
                     .put("source_id", attempt.sourceId ?: JSONObject.NULL)
                     .put("mode", attempt.mode.name)
+                    .apply { if (attempt.actualPos.isNotEmpty()) {
+                        put("actual_pos", PartOfSpeech.encode(attempt.actualPos))
+                        put("selected_pos", PartOfSpeech.encode(attempt.selectedPos))
+                        put("error_type", attempt.errorType?.name ?: JSONObject.NULL)
+                    } }
                     .put("sequence_index", attempt.sequenceIndex)
                     .put("question", attempt.question)
                     .put(
@@ -504,7 +526,7 @@ class SupabaseGateway {
             "active_time_ms,hint_used,answered_at"
         val response = request(
             config = config,
-            path = "/rest/v1/practice_attempts?select=$columns&order=answered_at.asc,sequence_index.asc",
+            path = "/rest/v1/practice_attempts?select=*&order=answered_at.asc,sequence_index.asc",
             method = "GET",
             accessToken = session.accessToken,
         )
@@ -527,6 +549,9 @@ class SupabaseGateway {
                         itemId = item.getString("item_id"),
                         sourceId = item.optNullableString("source_id"),
                         mode = item.optEnum("mode", PracticeAttemptMode.QUIZ_CHOICE),
+                        actualPos = item.optString("actual_pos").takeIf { it.isNotBlank() }?.let(PartOfSpeech::decode).orEmpty(),
+                        selectedPos = item.optString("selected_pos").takeIf { it.isNotBlank() }?.let(PartOfSpeech::decode).orEmpty(),
+                        errorType = item.optNullableString("error_type")?.let { runCatching { PosErrorType.valueOf(it) }.getOrNull() },
                         sequenceIndex = item.optInt("sequence_index"),
                         question = item.optString("question"),
                         options = options,

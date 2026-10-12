@@ -5,6 +5,10 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import com.zlight106.nvvocab.data.PartOfSpeech
+import com.zlight106.nvvocab.data.PosErrorType
+import com.zlight106.nvvocab.data.PosExercise
+import com.zlight106.nvvocab.domain.PosCodec
 import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.DailyPracticeProgress
@@ -86,6 +90,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         createWrongQuestionsTable(database)
         createPracticeAttemptsTable(database)
         createParaphraseSeedTables(database)
+        migratePos(database)
     }
 
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -107,6 +112,35 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             database.addColumnIfMissing(TABLE_PRACTICE_ATTEMPTS, "source_id", "TEXT")
         }
         if (oldVersion < 10) createParaphraseSeedTables(database)
+        if (oldVersion < 11) migratePos(database)
+    }
+
+    private fun migratePos(database: SQLiteDatabase) {
+        PosMigration.wordColumns.forEach { (column, declaration) -> database.addColumnIfMissing(TABLE_WORDS, column, declaration) }
+        PosMigration.attemptColumns.forEach { (column, declaration) -> database.addColumnIfMissing(TABLE_PRACTICE_ATTEMPTS, column, declaration) }
+        database.execSQL(PosMigration.cacheSql)
+    }
+
+    fun getPosExercises(): List<PosExercise> = readableDatabase.rawQuery("SELECT payload FROM pos_exercises", null).use { cursor ->
+        buildList { while (cursor.moveToNext()) runCatching { PosCodec.decode(cursor.getString(0)) }.getOrNull()?.let(::add) }
+    }
+
+    fun savePosExercises(exercises: List<PosExercise>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            exercises.forEach { q -> db.insertWithOnConflict("pos_exercises", null, ContentValues().apply {
+                put("id", q.id); put("payload", PosCodec.encode(q))
+            }, SQLiteDatabase.CONFLICT_REPLACE) }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    fun updateWordPos(id: String, parts: Set<PartOfSpeech>, needsReview: Boolean, explanation: String) {
+        writableDatabase.update(TABLE_WORDS, ContentValues().apply {
+            put("parts_of_speech", PartOfSpeech.encode(parts)); put("pos_needs_review", if (needsReview) 1 else 0)
+            put("pos_explanation", explanation); put("dirty", 1)
+        }, "id = ?", arrayOf(id))
     }
 
     fun getWords(): List<WordEntry> = readableDatabase.query(
@@ -469,12 +503,18 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
 
     fun upsertRemoteWords(words: List<WordEntry>) {
         val dirtyIds = queryDirtyWords().mapTo(mutableSetOf(), WordEntry::id)
+        val local = getWords().associateBy { it.id }
         writableDatabase.inTransaction {
             words.filterNot { it.id in dirtyIds }.forEach { word ->
                 insertWithOnConflict(
                     TABLE_WORDS,
                     null,
-                    word.copy(dirty = false).toContentValues(),
+                    word.let { remote ->
+                        val previous = local[remote.id]
+                        if (remote.partsOfSpeech == setOf(PartOfSpeech.UNKNOWN) && previous != null && previous.partsOfSpeech != setOf(PartOfSpeech.UNKNOWN)) {
+                            remote.copy(partsOfSpeech = previous.partsOfSpeech, posNeedsReview = previous.posNeedsReview, posExplanation = previous.posExplanation)
+                        } else remote
+                    }.copy(dirty = false).toContentValues(),
                     SQLiteDatabase.CONFLICT_REPLACE,
                 )
             }
@@ -1009,6 +1049,9 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     private fun WordEntry.toContentValues(): ContentValues = ContentValues().apply {
+        put("parts_of_speech", PartOfSpeech.encode(partsOfSpeech))
+        put("pos_needs_review", if (posNeedsReview) 1 else 0)
+        put("pos_explanation", posExplanation)
         put("id", id)
         put("user_id", userId)
         put("spelling", spelling)
@@ -1034,6 +1077,9 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     private fun PracticeAttempt.toContentValues(): ContentValues = ContentValues().apply {
+        put("actual_pos", PartOfSpeech.encode(actualPos))
+        put("selected_pos", PartOfSpeech.encode(selectedPos))
+        put("error_type", errorType?.name)
         put("id", id)
         put("user_id", userId)
         put("session_id", sessionId)
@@ -1143,6 +1189,9 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     private fun Cursor.toWordEntry(): WordEntry = WordEntry(
+        partsOfSpeech = PartOfSpeech.decode(getStringOrNull("parts_of_speech")),
+        posNeedsReview = getLongOrNull("pos_needs_review") == 1L,
+        posExplanation = getStringOrNull("pos_explanation").orEmpty(),
         id = getString(getColumnIndexOrThrow("id")),
         userId = getStringOrNull("user_id"),
         spelling = getString(getColumnIndexOrThrow("spelling")),
@@ -1168,6 +1217,9 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     )
 
     private fun Cursor.toPracticeAttempt(): PracticeAttempt = PracticeAttempt(
+        actualPos = getStringOrNull("actual_pos")?.takeIf { it.isNotBlank() }?.let(PartOfSpeech::decode).orEmpty(),
+        selectedPos = getStringOrNull("selected_pos")?.takeIf { it.isNotBlank() }?.let(PartOfSpeech::decode).orEmpty(),
+        errorType = getStringOrNull("error_type")?.let { runCatching { PosErrorType.valueOf(it) }.getOrNull() },
         id = getString(getColumnIndexOrThrow("id")),
         userId = getStringOrNull("user_id"),
         sessionId = getString(getColumnIndexOrThrow("session_id")),
@@ -1204,13 +1256,13 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
     )
 
     private fun Cursor.getStringOrNull(column: String): String? {
-        val index = getColumnIndexOrThrow(column)
-        return if (isNull(index)) null else getString(index)
+        val index = getColumnIndex(column)
+        return if (index < 0 || isNull(index)) null else getString(index)
     }
 
     private fun Cursor.getLongOrNull(column: String): Long? {
-        val index = getColumnIndexOrThrow(column)
-        return if (isNull(index)) null else getLong(index)
+        val index = getColumnIndex(column)
+        return if (index < 0 || isNull(index)) null else getLong(index)
     }
 
     private fun String?.toStringSet(): Set<String> {
@@ -1584,7 +1636,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
 
     private companion object {
         const val DATABASE_NAME = "nvvocab.db"
-        const val DATABASE_VERSION = 10
+        const val DATABASE_VERSION = 11
         const val TABLE_DELETED_PARAPHRASE_SEEDS = "deleted_paraphrase_seeds"
         const val TABLE_DELETED_TITLELISTS = "deleted_titlelists"
         const val TABLE_CONTRAST_SESSIONS = "contrast_practice_sessions"
@@ -1600,6 +1652,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         const val TABLE_WRONG_QUESTIONS = "wrong_questions"
 
         val WORD_COLUMNS = arrayOf(
+            "parts_of_speech", "pos_needs_review", "pos_explanation",
             "id",
             "user_id",
             "spelling",
@@ -1623,6 +1676,7 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
             "dirty",
         )
         val PRACTICE_ATTEMPT_COLUMNS = arrayOf(
+            "actual_pos", "selected_pos", "error_type",
             "id",
             "user_id",
             "session_id",

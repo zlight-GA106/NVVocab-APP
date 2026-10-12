@@ -1,6 +1,8 @@
 package com.zlight106.nvvocab.ui.screens
 
 import com.zlight106.nvvocab.domain.WordUsagePractice
+import com.zlight106.nvvocab.data.*
+import com.zlight106.nvvocab.domain.PosPractice
 
 import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
@@ -101,6 +103,7 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 sealed interface PracticeSessionRequest : java.io.Serializable {
+    data class Pos(val queue: List<PosExercise>, val completeMode: Boolean = false, val timeLimitSeconds: Int = 0, val focusBlanks: Set<Int> = emptySet()) : PracticeSessionRequest
     data class Words(
         val queue: List<WordEntry>,
         val mode: DictationMode,
@@ -328,6 +331,7 @@ fun PracticeSessionScreen(
         ) {
             WebPronunciationHost(pronunciationPlayer)
             when (request) {
+                is PracticeSessionRequest.Pos -> PosSession(request, sessionRuntime, viewModel, speakWord, onExit)
                 is PracticeSessionRequest.Words -> WordSession(
                     request = request,
                     runtime = sessionRuntime,
@@ -432,6 +436,7 @@ fun PracticeSessionScreen(
 }
 
 private fun PracticeSessionRequest.title(): String = when (this) {
+    is PracticeSessionRequest.Pos -> queue.firstOrNull()?.mode?.label ?: "词性专项"
     is PracticeSessionRequest.Words -> if (mode == DictationMode.REVIEW) "复习默写" else "拼写练习"
     is PracticeSessionRequest.Quiz -> if (queue.firstOrNull()?.category == WordUsagePractice.CATEGORY) "单词用法复习" else "题库答题"
     is PracticeSessionRequest.Contrast -> "对照练习"
@@ -454,6 +459,7 @@ private fun interruptAndSettle(
         return
     }
     when (request) {
+        is PracticeSessionRequest.Pos -> viewModel.recordPosSession(request.queue, attempts, complete)
         is PracticeSessionRequest.Words -> {
             val results = if (request.mode == DictationMode.REVIEW) attempts.mapNotNull { attempt ->
                 request.queue.getOrNull(attempt.sequenceIndex)?.let { word ->
@@ -544,6 +550,7 @@ private fun WordSession(
             )
         } else {
             WordQuestion(
+                viewModel = viewModel,
                 mode = request.mode,
                 word = request.queue[currentIndex],
                 position = currentIndex + 1,
@@ -638,6 +645,7 @@ private fun WordSession(
 
 @Composable
 private fun WordQuestion(
+    viewModel: MainViewModel,
     mode: DictationMode,
     word: WordEntry,
     position: Int,
@@ -697,6 +705,7 @@ private fun WordQuestion(
                 }
             }
             word.phonetic?.let { Text("[$it]", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (checked) com.zlight106.nvvocab.ui.components.PosWordLabels(word, viewModel)
             if (hinted) Text("首字母：${word.spelling.firstOrNull()?.uppercaseChar() ?: ""}")
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
@@ -1674,9 +1683,20 @@ private fun MixedSession(
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge,
             )
-            if (item.mode == MixedReviewMode.DICTATION) {
+            if (item.mode == MixedReviewMode.POS) {
+                val word = requireNotNull(item.word)
+                val previous = runtime.attempts.firstOrNull { it.sequenceIndex == currentIndex }
+                PosQuestion(PosPractice.drill(word), previous, false, request.timeLimitSeconds,
+                    { viewModel.elapsedQuestionTime(runtime.sessionId, currentIndex) }, onSpeakWord,
+                    { selected -> if (viewModel.practiceSessionRuntime.value?.attempts?.none { it.sequenceIndex == currentIndex } == true) {
+                        viewModel.stagePracticeAttempt(PosPractice.attempt(PosPractice.drill(word), runtime.sessionId, currentIndex, selected,
+                            false, viewModel.snapshotQuestionTime(runtime.sessionId, currentIndex), previous))
+                    } },
+                    { previous?.let(::completeCurrent) }, !settling)
+            } else if (item.mode == MixedReviewMode.DICTATION) {
                 val word = requireNotNull(item.word)
                 WordQuestion(
+                    viewModel = viewModel,
                     mode = DictationMode.REVIEW,
                     word = word,
                     position = currentIndex + 1,
@@ -1772,6 +1792,7 @@ private fun MixedSession(
 }
 
 private fun MixedReviewMode.sessionLabel(): String = when (this) {
+    MixedReviewMode.POS -> "当前模式：词性判断"
     MixedReviewMode.DICTATION -> "当前模式：默写"
     MixedReviewMode.CHINESE_TO_ENGLISH -> "当前模式：中翻英"
     MixedReviewMode.ENGLISH_TO_CHINESE -> "当前模式：英翻中"
@@ -1779,6 +1800,7 @@ private fun MixedReviewMode.sessionLabel(): String = when (this) {
 }
 
 private fun MixedReviewMode.toAttemptMode(): PracticeAttemptMode = when (this) {
+    MixedReviewMode.POS -> PracticeAttemptMode.WORD_POS_CLASSIFICATION
     MixedReviewMode.DICTATION -> PracticeAttemptMode.WORD_DICTATION
     MixedReviewMode.CHINESE_TO_ENGLISH -> PracticeAttemptMode.CHINESE_TO_ENGLISH
     MixedReviewMode.ENGLISH_TO_CHINESE -> PracticeAttemptMode.ENGLISH_TO_CHINESE
@@ -1805,7 +1827,7 @@ private fun PracticeAttempt.toMixedAnswerRecord(queue: List<MixedReviewItem>): M
 }
 
 @Composable
-private fun SessionResult(
+internal fun SessionResult(
     title: String,
     summary: String,
     sessionId: String,
@@ -2003,6 +2025,10 @@ private fun AttemptModeSummaryRow(summary: AttemptModeTimeSummary) {
 }
 
 private fun PracticeAttemptMode.displayName(): String = when (this) {
+    PracticeAttemptMode.WORD_POS_CLASSIFICATION -> "词性速判"
+    PracticeAttemptMode.CONTEXT_POS_CLASSIFICATION -> "语境词性"
+    PracticeAttemptMode.SLOT_POS_CLASSIFICATION -> "空位词性"
+    PracticeAttemptMode.CET4_WORD_BANK -> "CET-4 选词填空"
     PracticeAttemptMode.WORD_DICTATION -> "默写"
     PracticeAttemptMode.WORD_SPELLING -> "拼写练习"
     PracticeAttemptMode.QUIZ_CHOICE -> "选择题"

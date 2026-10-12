@@ -34,12 +34,12 @@ class MixedReviewPlannerTest {
     fun largestRemainderAlwaysPreservesTotal() {
         val counts = MixedReviewPlanner.allocateCounts(
             total = 7,
-            enabledModes = MixedReviewMode.entries.toSet(),
-            percentages = MixedReviewMode.entries.associateWith { 25 },
+            enabledModes = MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.toSet(),
+            percentages = MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.associateWith { 25 },
         )
 
         assertEquals(7, counts.values.sum())
-        assertEquals(listOf(2, 2, 2, 1), MixedReviewMode.entries.map { counts[it] })
+        assertEquals(listOf(2, 2, 2, 1), MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.map { counts[it] })
     }
 
     @Test

@@ -27,6 +27,20 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class AiPracticeGateway {
+    suspend fun requestPos(settings: AiSettings, prompt: String, input: JSONObject): String = withContext(Dispatchers.IO) {
+        validateSettings(settings)
+        val body = JSONObject().put("model", settings.model)
+            .put("messages", JSONArray()
+                .put(JSONObject().put("role", "system").put("content", prompt))
+                .put(JSONObject().put("role", "user").put("content", input.toString())))
+            .put("temperature", 0.2).put("max_tokens", 16000).put("stream", false)
+            .apply { if (settings.provider == AiProvider.DEEPSEEK) put("thinking", JSONObject().put("type", "disabled")) }
+        val response = JSONObject(executeRequest(settings, body))
+        val choice = response.getJSONArray("choices").getJSONObject(0)
+        require(choice.optString("finish_reason") != "length") { "AI 输出被截断，请减少批量数量" }
+        choice.getJSONObject("message").getString("content")
+    }
+
     suspend fun generateWordUsageQuestions(
         settings: AiSettings,
         targets: List<WordEntry>,

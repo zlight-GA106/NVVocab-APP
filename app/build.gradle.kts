@@ -25,8 +25,8 @@ android {
         applicationId = "com.zlight106.nvvocab"
         minSdk = 31
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.5.2"
+        versionCode = 18
+        versionName = "1.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -103,4 +103,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
