@@ -16,7 +16,9 @@ class AppPreferences(context: Context) {
             q.optString("annotation", POS_ANNOTATION_PROMPT).ifBlank { POS_ANNOTATION_PROMPT },
             q.optString("context", POS_CONTEXT_PROMPT).ifBlank { POS_CONTEXT_PROMPT },
             q.optString("slot", POS_SLOT_PROMPT).ifBlank { POS_SLOT_PROMPT },
-            q.optString("cet4", POS_CET4_PROMPT).ifBlank { POS_CET4_PROMPT })
+            q.optString("cet4", POS_CET4_PROMPT).ifBlank { POS_CET4_PROMPT },
+            slotFirst = q.optBoolean("slotFirst", true),
+            foundationIncludeCet4 = q.optBoolean("foundationCet4", false))
     }
 
     fun readPosDraft(session: String): String = preferences.getString("pos_draft_$session", "{}").orEmpty()
@@ -29,6 +31,7 @@ class AppPreferences(context: Context) {
             .put("mixed", settings.mixedEnabled).put("unknown", settings.autoUnknown)
             .put("annotation", settings.annotationPrompt).put("context", settings.contextPrompt)
             .put("slot", settings.slotPrompt).put("cet4", settings.cet4Prompt)
+            .put("slotFirst", settings.slotFirst).put("foundationCet4", settings.foundationIncludeCet4)
         preferences.edit().putString("pos_settings", q.toString()).apply()
     }
 

@@ -103,7 +103,17 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 sealed interface PracticeSessionRequest : java.io.Serializable {
-    data class Pos(val queue: List<PosExercise>, val completeMode: Boolean = false, val timeLimitSeconds: Int = 0, val focusBlanks: Set<Int> = emptySet()) : PracticeSessionRequest
+    data class Pos(
+        val queue: List<PosExercise>, val completeMode: Boolean = false,
+        val timeLimitSeconds: Int = 0, val focusBlanks: Set<Int> = emptySet(),
+        val slotFirst: Boolean = false, val foundation: Boolean = false,
+        val followUpCet4: PosExercise? = null,
+    ) : PracticeSessionRequest {
+        companion object {
+            // Keep existing Java-serialized paused POS sessions readable.
+            private const val serialVersionUID: Long = -5488165408987117757L
+        }
+    }
     data class Words(
         val queue: List<WordEntry>,
         val mode: DictationMode,
@@ -331,7 +341,9 @@ fun PracticeSessionScreen(
         ) {
             WebPronunciationHost(pronunciationPlayer)
             when (request) {
-                is PracticeSessionRequest.Pos -> PosSession(request, sessionRuntime, viewModel, speakWord, onExit)
+                is PracticeSessionRequest.Pos -> androidx.compose.runtime.key(sessionRuntime.sessionId) {
+                    PosSession(request, sessionRuntime, viewModel, speakWord, onExit)
+                }
                 is PracticeSessionRequest.Words -> WordSession(
                     request = request,
                     runtime = sessionRuntime,
@@ -436,7 +448,7 @@ fun PracticeSessionScreen(
 }
 
 private fun PracticeSessionRequest.title(): String = when (this) {
-    is PracticeSessionRequest.Pos -> queue.firstOrNull()?.mode?.label ?: "词性专项"
+    is PracticeSessionRequest.Pos -> if (foundation) "CET-4 保底训练" else queue.firstOrNull()?.mode?.label ?: "词性专项"
     is PracticeSessionRequest.Words -> if (mode == DictationMode.REVIEW) "复习默写" else "拼写练习"
     is PracticeSessionRequest.Quiz -> if (queue.firstOrNull()?.category == WordUsagePractice.CATEGORY) "单词用法复习" else "题库答题"
     is PracticeSessionRequest.Contrast -> "对照练习"
@@ -1692,7 +1704,7 @@ private fun MixedSession(
                         viewModel.stagePracticeAttempt(PosPractice.attempt(PosPractice.drill(word), runtime.sessionId, currentIndex, selected,
                             false, viewModel.snapshotQuestionTime(runtime.sessionId, currentIndex), previous))
                     } },
-                    { previous?.let(::completeCurrent) }, !settling)
+                    { previous?.let(::completeCurrent) }, !settling, liveWord = word)
             } else if (item.mode == MixedReviewMode.DICTATION) {
                 val word = requireNotNull(item.word)
                 WordQuestion(

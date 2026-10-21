@@ -97,7 +97,7 @@ data class AppUiState(
 )
 
 private fun PracticeSessionRequest.titleForArchive(): String = when (this) {
-    is PracticeSessionRequest.Pos -> queue.firstOrNull()?.mode?.label ?: "词性专项"
+    is PracticeSessionRequest.Pos -> if (foundation) "CET-4 保底训练" else queue.firstOrNull()?.mode?.label ?: "词性专项"
     is PracticeSessionRequest.Words -> "单词复习"
     is PracticeSessionRequest.Quiz -> if (queue.firstOrNull()?.category == WordUsagePractice.CATEGORY) "单词用法复习" else "题库练习"
     is PracticeSessionRequest.Contrast -> "对照练习"
@@ -694,7 +694,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         mutablePracticeSessionRuntime.value = PracticeSessionRuntime(sessionId = sessionId)
         val posQueue = (request as? PracticeSessionRequest.Quiz)?.queue?.mapNotNull(PosCodec::fromQuiz).orEmpty()
         mutableActivePracticeSession.value = if (request is PracticeSessionRequest.Quiz && posQueue.size == request.queue.size && posQueue.isNotEmpty()) {
-            PracticeSessionRequest.Pos(if (posQueue.first().mode == PosMode.CET4) posQueue.take(1) else posQueue, posSettings.completeMode, request.timeLimitSeconds ?: 0)
+            PracticeSessionRequest.Pos(if (posQueue.first().mode == PosMode.CET4) posQueue.take(1) else posQueue, posSettings.completeMode, request.timeLimitSeconds ?: 0, slotFirst = posSettings.slotFirst)
         } else request
     }
 

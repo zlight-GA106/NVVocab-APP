@@ -19,7 +19,10 @@ internal fun PosSettingsPanel(viewModel: MainViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedTextField(count, { count = it.filter(Char::isDigit).take(3) }, label = { Text("默认题量（1–200）") }, modifier = Modifier.fillMaxWidth())
         NvvDropdown("默认限时", settings.timeLimitSeconds, listOf(0 to "不限时", 3 to "3秒", 5 to "5秒"), NvvIcons.Clock, { settings = settings.copy(timeLimitSeconds = it) })
-        PosToggle("速判完整模式（默认宽松）", settings.completeMode) { settings = settings.copy(completeMode = it) }
+        PosToggle("完整模式：必须选出全部常见词性", settings.completeMode) { settings = settings.copy(completeMode = it) }
+        Text("默认保底模式：选中任一真实常见词性即可，答题后显示全部词性。", style = MaterialTheme.typography.bodySmall)
+        PosToggle("填词前先判断空位词性", settings.slotFirst) { settings = settings.copy(slotFirst = it) }
+        PosToggle("保底5分钟结束后追加1套CET-4模拟", settings.foundationIncludeCet4) { settings = settings.copy(foundationIncludeCet4 = it) }
         OutlinedTextField(batch, { batch = it.filter(Char::isDigit).take(3) }, label = { Text("AI 每批标注数量（30–100）") }, modifier = Modifier.fillMaxWidth())
         Text("语境 / 空位出题每次最多10词，避免截断；标注按上方批量数量处理。", style = MaterialTheme.typography.bodySmall)
         PosToggle("标注时自动生成词性解释", settings.autoExplanation) { settings = settings.copy(autoExplanation = it) }

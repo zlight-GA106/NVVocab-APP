@@ -34,6 +34,7 @@ import com.zlight106.nvvocab.data.PosMode
 import com.zlight106.nvvocab.data.PartOfSpeech
 import com.zlight106.nvvocab.data.PosErrorType
 import com.zlight106.nvvocab.domain.PosPractice
+import com.zlight106.nvvocab.domain.Cet4Training
 import com.zlight106.nvvocab.data.QuizQuestionType
 import com.zlight106.nvvocab.data.WrongQuestionSort
 import com.zlight106.nvvocab.data.WrongQuestionSource
@@ -132,6 +133,10 @@ fun WrongBookPanel(
         else {
             val questions = posCache.filter { q -> posEntries.any { it.questionKey == q.id || it.questionKey.startsWith(q.id + ":") } }
                 .toMutableList()
+            posCache.filter { it.mode == PosMode.CET4 }.forEach { q ->
+                q.blanks.filter { b -> posEntries.any { it.questionKey == Cet4Training.slotItemId(q.id, b.index) } }
+                    .forEach { questions.add(Cet4Training.slotExercise(q, it)) }
+            }
             val words = viewModel.words.value
             posEntries.filter { it.category == PosMode.DRILL.attemptMode.name }.forEach { entry ->
                 words.firstOrNull { "pos-word:${it.id}" == entry.questionKey }?.let { word -> if (PosPractice.eligible(word)) questions.add(PosPractice.drill(word)) }
@@ -141,7 +146,7 @@ fun WrongBookPanel(
                 if (unique.first().mode == PosMode.CET4) {
                     val set = unique.firstOrNull { it.id == currentCetSetId } ?: unique.first()
                     val focus = set.blanks.filter { b -> posEntries.any { it.questionKey == "${set.id}:${b.index}" } }.map { it.index }.toSet()
-                    onStartSession(PracticeSessionRequest.Pos(listOf(set), focusBlanks = focus))
+                    onStartSession(PracticeSessionRequest.Pos(listOf(set), focusBlanks = focus, slotFirst = viewModel.posSettings.slotFirst))
                 } else onStartSession(PracticeSessionRequest.Pos(unique, viewModel.posSettings.completeMode))
             }
             else viewModel.notifyUser("请先同步或生成对应的词性题目缓存")

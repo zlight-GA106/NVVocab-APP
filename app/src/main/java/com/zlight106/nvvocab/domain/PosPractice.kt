@@ -159,26 +159,48 @@ object PosPractice {
         require(answers.none { (index, value) -> index != slot && value == candidate }) { "该候选词已经使用" }
         return answers + (slot to candidate)
     }
-    fun cetError(blank: PosBlank, chosen: PosCandidate?, classified: Set<PartOfSpeech>): PosErrorType? {
+    fun cetError(blank: PosBlank, chosen: PosCandidate?, classified: Set<PartOfSpeech>,
+        slotSelected: Set<PartOfSpeech>? = null): PosErrorType? {
         if (chosen?.id == blank.answerId) return null
         if (chosen == null) return PosErrorType.OTHER
-        if (blank.correctPos !in chosen.parts || blank.correctPos !in classified) {
+        if (slotSelected != null && !judge(slotSelected, setOf(blank.correctPos), false)) return PosErrorType.POS_WRONG
+        if (blank.correctPos !in chosen.parts || core(classified) != core(chosen.parts) || PartOfSpeech.UNKNOWN in classified) {
             return if (core(chosen.parts).size > 1) PosErrorType.MULTI_POS_CONFUSION else PosErrorType.POS_WRONG
         }
         return blank.distractorErrors[chosen.id] ?: PosErrorType.CONTEXT_WRONG
     }
 
+    fun cetErrorExplanation(blank: PosBlank, chosen: PosCandidate?, classified: Set<PartOfSpeech>,
+        slotSelected: Set<PartOfSpeech>? = null): String {
+        fun describe(parts: Set<PartOfSpeech>) = when {
+            PartOfSpeech.UNKNOWN in parts -> "? 不确定"
+            core(parts).isEmpty() -> "未处理"
+            else -> core(parts).joinToString(" / ") { it.shortLabel }
+        }
+        val slotWrong = slotSelected != null && !judge(slotSelected, setOf(blank.correctPos), false)
+        return when {
+            chosen?.id == blank.answerId && slotWrong -> "最终选词正确；空位词性判断错误（你选 ${describe(slotSelected.orEmpty())}，应为 ${blank.correctPos.shortLabel}），已单独记录。"
+            chosen?.id == blank.answerId -> "最终选词正确。"
+            slotWrong -> "空位词性判断错误：你选 ${describe(slotSelected.orEmpty())}，本空需要 ${blank.correctPos.shortLabel}。"
+            chosen == null -> "本空未选择候选词。"
+            core(classified) != core(chosen.parts) || PartOfSpeech.UNKNOWN in classified ->
+                "候选词词性判断错误：${chosen.word} 的预分类为 ${describe(classified)}，实际常见词性为 ${describe(chosen.parts)}。"
+            blank.correctPos !in chosen.parts -> "候选词词性与空位不匹配：本空需要 ${blank.correctPos.shortLabel}，所选词为 ${describe(chosen.parts)}。"
+            else -> "空位词性和候选词词性均已识别；本次为${(blank.distractorErrors[chosen.id] ?: PosErrorType.CONTEXT_WRONG).label}。"
+        }
+    }
+
     fun cetAttempt(q: PosExercise, blank: PosBlank, session: String, selectedId: String?, classified: Set<PartOfSpeech>,
-        activeMs: Long, previous: PracticeAttempt? = null): PracticeAttempt {
+        activeMs: Long, previous: PracticeAttempt? = null, slotSelected: Set<PartOfSpeech>? = null): PracticeAttempt {
         val selected = q.candidates.firstOrNull { it.id == selectedId }
         val correctWord = q.candidates.first { it.id == blank.answerId }
         val correct = selected?.id == blank.answerId
         return PracticeAttempt(previous?.id ?: UUID.randomUUID().toString(), previous?.userId, session, "${q.id}:${blank.index}", q.sourceTag,
             PracticeAttemptMode.CET4_WORD_BANK, blank.index - 1, "第${blank.index}空：${q.sentence}", q.candidates.map { QuizOption(it.id, it.word) },
             previous?.firstAnswer ?: selectedId.orEmpty(), selectedId.orEmpty(), blank.answerId, setOf(blank.answerId),
-            "正确答案：${correctWord.word}；需要 ${blank.correctPos.shortLabel}；你的预分类：${classified.joinToString { it.shortLabel }}。\n${blank.grammarClue}\n${blank.explanation}",
-            correct, previous?.firstAnswerCorrect ?: correct, activeMs, false, System.currentTimeMillis(), true, setOf(blank.correctPos), classified,
-            cetError(blank, selected, classified))
+            "${cetErrorExplanation(blank, selected, classified, slotSelected)}\n正确答案：${correctWord.word}；需要 ${blank.correctPos.shortLabel}；你的预分类：${classified.joinToString { it.shortLabel }.ifBlank { "未处理" }}。\n${blank.grammarClue}\n${blank.explanation}",
+            correct, previous?.firstAnswerCorrect ?: correct, maxOf(activeMs, previous?.activeTimeMs ?: 0L), false, System.currentTimeMillis(), true, setOf(blank.correctPos), classified,
+            cetError(blank, selected, classified, slotSelected))
     }
 
     fun attempt(exercise: PosExercise, session: String, index: Int, selected: Set<PartOfSpeech>,
@@ -190,7 +212,7 @@ object PosPractice {
             PartOfSpeech.core.map { QuizOption(it.name, "${it.shortLabel} ${it.label}") },
             previous?.firstAnswer ?: answer, answer, PartOfSpeech.encode(exercise.correctParts),
             exercise.correctParts.map { it.name }.toSet(), exercise.explanation, correct,
-            previous?.firstAnswerCorrect ?: correct, activeMs, previous?.hintUsed ?: false,
+            previous?.firstAnswerCorrect ?: correct, maxOf(activeMs, previous?.activeTimeMs ?: 0L), previous?.hintUsed ?: false,
             System.currentTimeMillis(), true, exercise.correctParts, selected,
             if (correct) null else if (exercise.correctParts.size > 1) PosErrorType.MULTI_POS_CONFUSION else PosErrorType.POS_WRONG)
     }
@@ -207,29 +229,63 @@ object PosPractice {
 data class PosRate(val count: Int, val correct: Int, val averageMs: Long, val within3: Double, val within5: Double) {
     val accuracy: Double get() = if (count == 0) 0.0 else correct.toDouble() / count
 }
-data class PosStatistics(val rates: Map<PartOfSpeech, PosRate>, val confusion: Map<Pair<PartOfSpeech, PartOfSpeech>, Int>, val worstWords: List<Pair<String, Int>>)
+data class PosStatistics(
+    val rates: Map<PartOfSpeech, PosRate>,
+    val confusion: Map<Pair<PartOfSpeech, PartOfSpeech>, Int>,
+    val worstWords: List<Pair<String, Int>>,
+    val wordRecognition: PosRate = PosRate(0, 0, 0, 0.0, 0.0),
+    val slotRecognition: PosRate = PosRate(0, 0, 0, 0.0, 0.0),
+    val cetSelection: PosRate = PosRate(0, 0, 0, 0.0, 0.0),
+    val multiPosOmissionRate: Double = 0.0,
+    val uncertainRate: Double = 0.0,
+    val multiPosOmissionCount: Int = 0,
+    val multiPosCount: Int = 0,
+    val uncertainCount: Int = 0,
+    val judgmentCount: Int = 0,
+)
 object PosAnalytics {
     fun calculate(attempts: List<PracticeAttempt>, since: Long = 0, wordName: (String) -> String = { it }): PosStatistics {
         val rows = attempts.filter { it.mode in PosPractice.modes && it.timestamp >= since }
-            .groupBy { it.sessionId to it.sequenceIndex }.values.map { it.maxBy(PracticeAttempt::timestamp) }
-        val rates = PartOfSpeech.core.associateWith { pos ->
-            val group = rows.filter { pos in it.actualPos }
+            .groupBy { Triple(it.sessionId, it.mode, it.sequenceIndex) }
+            .values.map { group -> group.asReversed().maxBy(PracticeAttempt::timestamp) }
+        val judgments = rows.filter { it.mode != PracticeAttemptMode.CET4_WORD_BANK }
+        fun rate(group: List<PracticeAttempt>): PosRate {
             fun timed(limit: Long): Double {
                 val subset = group.filter { it.activeTimeMs <= limit && !it.hintUsed }
                 return if (subset.isEmpty()) 0.0 else subset.count { it.correct }.toDouble() / subset.size
             }
-            PosRate(group.size, group.count { it.correct }, if (group.isEmpty()) 0 else group.sumOf { it.activeTimeMs } / group.size, timed(3000), timed(5000))
+            return PosRate(group.size, group.count { it.correct }, if (group.isEmpty()) 0 else group.sumOf { it.activeTimeMs } / group.size, timed(3000), timed(5000))
+        }
+        val rates = PartOfSpeech.core.associateWith { pos ->
+            rate(judgments.filter { pos in it.actualPos })
         }
         val matrix = mutableMapOf<Pair<PartOfSpeech, PartOfSpeech>, Int>()
-        rows.filter { !it.correct }.forEach { row ->
+        judgments.filter { !it.correct }.forEach { row ->
             PosPractice.core(row.actualPos).forEach { actual ->
                 PosPractice.core(row.selectedPos).filter { it !in row.actualPos }.forEach { selected ->
                     val key = actual to selected; matrix[key] = matrix.getOrDefault(key, 0) + 1
                 }
             }
         }
-        val worst = rows.filter { !it.correct }.groupingBy { wordName(it.itemId) }.eachCount().entries
+        val worst = judgments.filter { !it.correct }.groupingBy { wordName(it.itemId) }.eachCount().entries
             .sortedByDescending { it.value }.take(20).map { it.key to it.value }
-        return PosStatistics(rates, matrix, worst)
+        val multiPos = judgments.filter { PosPractice.core(it.actualPos).size > 1 }
+        // A correct loose-mode answer is not an omission. Unknown or unrelated answers are
+        // recognition failures, rather than evidence that one of several known parts was omitted.
+        val omitted = multiPos.count { row ->
+            val selected = PosPractice.core(row.selectedPos)
+            val actual = PosPractice.core(row.actualPos)
+            !row.correct && PartOfSpeech.UNKNOWN !in row.selectedPos && selected.isNotEmpty() &&
+                selected.all { it in actual } && !selected.containsAll(actual)
+        }
+        val uncertain = judgments.count { PartOfSpeech.UNKNOWN in it.selectedPos }
+        return PosStatistics(rates, matrix, worst,
+            wordRecognition = rate(rows.filter { it.mode == PracticeAttemptMode.WORD_POS_CLASSIFICATION }),
+            slotRecognition = rate(rows.filter { it.mode == PracticeAttemptMode.SLOT_POS_CLASSIFICATION }),
+            cetSelection = rate(rows.filter { it.mode == PracticeAttemptMode.CET4_WORD_BANK }),
+            multiPosOmissionRate = if (multiPos.isEmpty()) 0.0 else omitted.toDouble() / multiPos.size,
+            uncertainRate = if (judgments.isEmpty()) 0.0 else uncertain.toDouble() / judgments.size,
+            multiPosOmissionCount = omitted, multiPosCount = multiPos.size,
+            uncertainCount = uncertain, judgmentCount = judgments.size)
     }
 }

@@ -4,6 +4,7 @@ import com.zlight106.nvvocab.data.AppPreferences
 import com.zlight106.nvvocab.data.*
 import com.zlight106.nvvocab.domain.PosPractice
 import com.zlight106.nvvocab.domain.PosCodec
+import com.zlight106.nvvocab.domain.PosFoundationPlanner
 import org.json.JSONObject
 import org.json.JSONArray
 import com.zlight106.nvvocab.data.AnswerEvaluationResult
@@ -177,10 +178,10 @@ class VocabularyRepository(
     suspend fun recordPosSession(exercises: List<PosExercise>, attempts: List<PracticeAttempt>) = withContext(Dispatchers.IO) {
         recordPracticeAttempts(attempts)
         database.recordWrongQuestionResults(attempts.map { PosPractice.wrongResult(it) }, preferences.readSession()?.userId)
-        val sourceWords = exercises.associateBy { it.id }
         val wordResults = attempts.mapNotNull { a ->
-            val wordId = sourceWords[a.itemId]?.sourceWordId ?: a.itemId.takeIf { it.startsWith("pos-word:") }?.removePrefix("pos-word:") ?: exercises.asSequence().flatMap { q -> q.blanks.asSequence().map { q to it } }
-                .firstOrNull { (q, b) -> "${q.id}:${b.index}" == a.itemId }?.let { (q, b) -> q.candidates.first { it.id == b.answerId }.wordId }
+            // Recognising a blank's grammar does not demonstrate knowledge of its hidden word.
+            if (a.mode == PracticeAttemptMode.SLOT_POS_CLASSIFICATION && a.itemId.startsWith("cet4-slot-pos:")) return@mapNotNull null
+            val wordId = PosFoundationPlanner.wordId(a.itemId, exercises)
             mutableWords.value.firstOrNull { it.id == wordId }?.let { WordReviewResult(it, if (a.correct) 5 else 0) }
         }
         recordReviewSession(wordResults.groupBy { it.word.id }.values.map { rows -> rows.minBy { it.quality } }); refreshLocal(); onLocalDataChanged()

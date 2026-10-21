@@ -3,7 +3,7 @@ package com.zlight106.nvvocab.data
 import java.io.Serializable
 
 enum class PartOfSpeech(val shortLabel: String, val label: String) {
-    NOUN("N", "名词"), VERB("V", "动词"), ADJECTIVE("Adj", "形容词"),
+    NOUN("N", "名词"), VERB("V", "动词"), ADJECTIVE("A / Adj", "形容词"),
     ADVERB("Adv", "副词"), OTHER("Other", "其他"), UNKNOWN("?", "未识别");
 
     companion object {
@@ -53,6 +53,8 @@ data class PosSettings(
     val contextPrompt: String = POS_CONTEXT_PROMPT,
     val slotPrompt: String = POS_SLOT_PROMPT,
     val cet4Prompt: String = POS_CET4_PROMPT,
+    val slotFirst: Boolean = true,
+    val foundationIncludeCet4: Boolean = false,
 )
 
 const val POS_ANNOTATION_PROMPT = """批量识别输入英语词条的所有词性，以词本身、释义和真实常见用法为依据；词缀只能提示，不能单独作为答案。仅输出严格 JSON，不得 Markdown、前言或额外文字。
