@@ -109,10 +109,6 @@ fun DictateScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("沉浸复习", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "选择单词拼写、AI 单词用法、本地题库或对照练习。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
         if (activeSession != null && activeRuntime?.finished == false) {
             Button(onClick = onResumeSession, modifier = Modifier.fillMaxWidth(), shape = CircleShape) {
                 Icon(NvvIcons.Play, null)
@@ -126,14 +122,12 @@ fun DictateScreen(
             label = "review-category",
         ) { selectedCategory ->
             when (selectedCategory) {
-                ReviewCategory.POS -> PosTrainingPanel(viewModel, words, tags, onStartSession)
                 ReviewCategory.WORDS -> WordReviewPanel(
                     viewModel = viewModel,
                     tags = tags,
                     initialPreferences = appState.wordReviewPreferences,
                     onStartSession = onStartSession,
                 )
-                ReviewCategory.USAGE -> WordUsageReviewPanel(viewModel, words, tags, onStartSession)
                 ReviewCategory.QUESTIONS -> QuizReviewPanel(
                     viewModel = viewModel,
                     banks = quizBanks,
@@ -195,18 +189,14 @@ private fun ReviewCategorySegment(
     modifier: Modifier,
 ) {
     val label = when (category) {
-        ReviewCategory.POS -> "词性专项"
         ReviewCategory.WORDS -> "单词复习"
-        ReviewCategory.USAGE -> "单词用法复习"
         ReviewCategory.QUESTIONS -> "题库练习"
         ReviewCategory.CONTRAST -> "对照练习"
         ReviewCategory.MIXED -> "混合复习"
         ReviewCategory.WRONG_BOOK -> "错题本"
     }
     val icon = when (category) {
-        ReviewCategory.POS -> NvvIcons.BookOpen
         ReviewCategory.WORDS -> NvvIcons.BrainCircuit
-        ReviewCategory.USAGE -> NvvIcons.BookOpen
         ReviewCategory.QUESTIONS -> NvvIcons.FileQuestion
         ReviewCategory.CONTRAST -> NvvIcons.Sparkles
         ReviewCategory.MIXED -> NvvIcons.RefreshCw

@@ -3,7 +3,7 @@ package com.zlight106.nvvocab.data
 import android.app.Application
 import android.database.sqlite.SQLiteDatabase
 import com.zlight106.nvvocab.data.local.NvvocabDatabase
-import com.zlight106.nvvocab.domain.*
+import com.zlight106.nvvocab.domain.SessionTelemetryXmlWriter
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
@@ -31,22 +31,82 @@ class PosDatabaseTest {
             assertEquals(11, db.readableDatabase.version); assertEquals("old", word.id)
             assertEquals(7, word.repetitions); assertEquals(2, word.wrongCount)
             assertEquals(456L, word.nextReviewAt); assertEquals(setOf(PartOfSpeech.UNKNOWN), word.partsOfSpeech)
-            db.updateWordPos(word.id, setOf(PartOfSpeech.NOUN, PartOfSpeech.VERB), false, "price increase")
-            assertEquals(setOf(PartOfSpeech.NOUN, PartOfSpeech.VERB), db.getWords().single().partsOfSpeech)
         }
     }
 
-    @Test fun attemptsWrongBookCacheAndTelemetryRoundTrip() {
-        val word = WordEntry("effective", null, "effective", null, "有效", "CET4", 1, 0, 1, 2.5, 2, 0, true, setOf(PartOfSpeech.ADJECTIVE))
-        val exercise = PosPractice.drill(word)
-        val attempt = PosPractice.attempt(exercise, "session", 0, setOf(PartOfSpeech.ADVERB), false, 2500)
+    @Test fun historicalWordAttemptsWrongBookAndTelemetryRoundTrip() {
+        val word = WordEntry(
+            id = "effective",
+            userId = null,
+            spelling = "effective",
+            phonetic = null,
+            translation = "有效",
+            bookTag = "CET4",
+            introTime = 1,
+            repetitions = 0,
+            intervalDays = 1,
+            easiness = 2.5,
+            nextReviewAt = 2,
+            wrongCount = 0,
+            dirty = true,
+            partsOfSpeech = setOf(PartOfSpeech.ADJECTIVE),
+            posNeedsReview = true,
+            posExplanation = "an effective method",
+        )
+        val attempt = PracticeAttempt(
+            id = "historical-attempt",
+            userId = null,
+            sessionId = "session",
+            itemId = "pos-word:${word.id}",
+            sourceId = word.bookTag,
+            mode = PracticeAttemptMode.WORD_POS_CLASSIFICATION,
+            sequenceIndex = 0,
+            question = word.spelling,
+            options = listOf(QuizOption("ADJECTIVE", "A / Adj 形容词"), QuizOption("ADVERB", "Adv 副词")),
+            firstAnswer = "ADVERB",
+            finalAnswer = "ADVERB",
+            referenceAnswer = "ADJECTIVE",
+            acceptedAnswers = setOf("ADJECTIVE"),
+            explanation = word.posExplanation,
+            correct = false,
+            firstAnswerCorrect = false,
+            activeTimeMs = 2500,
+            hintUsed = false,
+            timestamp = 3,
+            dirty = true,
+            actualPos = word.partsOfSpeech,
+            selectedPos = setOf(PartOfSpeech.ADVERB),
+            errorType = PosErrorType.POS_WRONG,
+        )
+        val unknown = attempt.copy(
+            id = "historical-unknown", sequenceIndex = 1, firstAnswer = "UNKNOWN", finalAnswer = "UNKNOWN",
+            selectedPos = setOf(PartOfSpeech.UNKNOWN),
+        )
+        val unanswered = attempt.copy(
+            id = "historical-unanswered", sequenceIndex = 2, firstAnswer = "", finalAnswer = "", selectedPos = emptySet(),
+        )
+        val wrongQuestion = WrongQuestionResult(
+            source = WrongQuestionSource.QUIZ,
+            bankId = null,
+            bankName = "词性速判",
+            questionKey = attempt.itemId,
+            questionText = attempt.question,
+            options = attempt.options,
+            correctAnswers = attempt.acceptedAnswers,
+            correct = false,
+            explanation = attempt.explanation,
+            category = attempt.mode.name,
+            sourceReference = attempt.sourceId,
+            userAnswer = attempt.finalAnswer,
+        )
         NvvocabDatabase(context).use { db ->
-            db.insertWords(listOf(word)); db.insertPracticeAttempts(listOf(attempt))
-            assertEquals(attempt, db.getPracticeAttempts().single())
-            db.recordWrongQuestionResults(listOf(PosPractice.wrongResult(attempt)), null)
+            db.insertWords(listOf(word))
+            db.insertPracticeAttempts(listOf(attempt, unknown, unanswered))
+            assertEquals(word, db.getWords().single())
+            assertEquals(listOf(attempt, unknown, unanswered), db.getPracticeAttempts().sortedBy { it.sequenceIndex })
+            db.recordWrongQuestionResults(listOf(wrongQuestion), null)
             assertEquals(1, db.getWrongQuestions().single().wrongCount)
             assertEquals(PracticeAttemptMode.WORD_POS_CLASSIFICATION.name, db.getWrongQuestions().single().category)
-            db.savePosExercises(listOf(exercise)); assertEquals(exercise, db.getPosExercises().single())
             val xml = ByteArrayOutputStream().also { SessionTelemetryXmlWriter.write("session", listOf(attempt), it, true) }
             val document = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(xml.toByteArray().inputStream())
             assertEquals("ADJECTIVE", document.getElementsByTagName("actual_pos").item(0).textContent)

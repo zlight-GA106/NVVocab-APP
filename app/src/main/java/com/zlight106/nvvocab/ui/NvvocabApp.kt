@@ -144,9 +144,10 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                     syncRuntimeState = syncRuntimeState,
                     activePracticeSession = activePracticeSession,
                     onStartPracticeSession = { request ->
-                        navController.popBackStack(PRACTICE_SESSION_ROUTE, true)
-                        viewModel.startPracticeSession(request)
-                        navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
+                        if (viewModel.startPracticeSession(request)) {
+                            navController.popBackStack(PRACTICE_SESSION_ROUTE, true)
+                            navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
+                        }
                     },
                     onClosePracticeSession = {
                         navController.popBackStack()
@@ -172,9 +173,10 @@ fun NvvocabApp(viewModel: MainViewModel, state: AppUiState) {
                 syncRuntimeState = syncRuntimeState,
                 activePracticeSession = activePracticeSession,
                 onStartPracticeSession = { request ->
-                    navController.popBackStack(PRACTICE_SESSION_ROUTE, true)
-                    viewModel.startPracticeSession(request)
-                    navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
+                    if (viewModel.startPracticeSession(request)) {
+                        navController.popBackStack(PRACTICE_SESSION_ROUTE, true)
+                        navController.navigate(PRACTICE_SESSION_ROUTE) { launchSingleTop = true }
+                    }
                 },
                 onClosePracticeSession = {
                     navController.popBackStack()

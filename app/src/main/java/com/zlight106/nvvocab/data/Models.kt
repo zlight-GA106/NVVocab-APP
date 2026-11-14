@@ -7,7 +7,6 @@ data class ParsedWord(
     val spelling: String,
     val phonetic: String,
     val translation: String,
-    val partsOfSpeech: Set<PartOfSpeech> = setOf(PartOfSpeech.UNKNOWN),
 )
 
 data class WordEntry(
@@ -183,6 +182,15 @@ enum class PracticeAttemptMode {
     ENGLISH_DEFINITION_TO_ENGLISH,
 }
 
+internal val PracticeAttemptMode.isLegacyPos: Boolean
+    get() = when (this) {
+        PracticeAttemptMode.WORD_POS_CLASSIFICATION,
+        PracticeAttemptMode.CONTEXT_POS_CLASSIFICATION,
+        PracticeAttemptMode.SLOT_POS_CLASSIFICATION,
+        PracticeAttemptMode.CET4_WORD_BANK -> true
+        else -> false
+    }
+
 data class PracticeAttempt(
     val id: String,
     val userId: String?,
@@ -297,6 +305,13 @@ data class WrongQuestionEntry(
             return (weightedCorrect * 100f / attemptCount).toInt().coerceIn(0, 100)
         }
 }
+
+private val legacyPosCategories = PracticeAttemptMode.entries.filter { it.isLegacyPos }.map { it.name }.toSet()
+
+internal fun String?.isLegacyPosSource(): Boolean = this?.startsWith("POS_JSON:") == true
+
+internal val WrongQuestionEntry.isLegacyPosQuestion: Boolean
+    get() = category in legacyPosCategories || sourceReference.isLegacyPosSource()
 
 data class WrongQuestionResult(
     val source: WrongQuestionSource,
@@ -562,9 +577,7 @@ enum class DictationMode {
 }
 
 enum class ReviewCategory {
-    POS,
     WORDS,
-    USAGE,
     QUESTIONS,
     CONTRAST,
     MIXED,
@@ -627,11 +640,15 @@ enum class MixedReviewMode {
     CHINESE_TO_ENGLISH,
     ENGLISH_TO_CHINESE,
     ENGLISH_DEFINITION_TO_ENGLISH,
-    POS,
+    /** Kept for deserializing paused sessions written by earlier versions. */
+    POS;
+
+    companion object {
+        val availableModes: List<MixedReviewMode> = entries.filterNot { it == POS }
+    }
 }
 
 fun defaultMixedModePercentages(): Map<MixedReviewMode, Int> = mapOf(
-    MixedReviewMode.POS to 0,
     MixedReviewMode.DICTATION to 25,
     MixedReviewMode.CHINESE_TO_ENGLISH to 25,
     MixedReviewMode.ENGLISH_TO_CHINESE to 25,
@@ -641,7 +658,7 @@ fun defaultMixedModePercentages(): Map<MixedReviewMode, Int> = mapOf(
 data class MixedReviewPreferences(
     val selectedTags: Set<String> = emptySet(),
     val questionCountText: String = "50",
-    val enabledModes: Set<MixedReviewMode> = MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.toSet(),
+    val enabledModes: Set<MixedReviewMode> = MixedReviewMode.availableModes.toSet(),
     val modePercentages: Map<MixedReviewMode, Int> = defaultMixedModePercentages(),
     val difficulty: PracticeDifficulty = PracticeDifficulty.EASY,
     val optionCountText: String = "4",

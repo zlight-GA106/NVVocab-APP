@@ -242,7 +242,6 @@ fun LexiconScreen(
                     ) {
                         row.forEach { word ->
                             WordPreviewCard(
-                                viewModel = viewModel,
                                 modifier = Modifier.weight(1f),
                                 word = word,
                                 number = chronologicalNumbers[word.id] ?: 0,
@@ -315,7 +314,6 @@ private fun LexiconSortDropdown(
 
 @Composable
 private fun WordPreviewCard(
-    viewModel: MainViewModel,
     word: WordEntry,
     number: Int,
     maturities: List<ItemMaturitySnapshot>,
@@ -371,7 +369,6 @@ private fun WordPreviewCard(
                 }
             }
             Text(word.translation, style = MaterialTheme.typography.bodyLarge)
-            com.zlight106.nvvocab.ui.components.PosWordLabels(word, viewModel)
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.secondaryContainer,

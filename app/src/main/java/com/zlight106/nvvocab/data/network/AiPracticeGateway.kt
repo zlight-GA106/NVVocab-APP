@@ -15,7 +15,6 @@ import com.zlight106.nvvocab.data.WrongQuestionEntry
 import com.zlight106.nvvocab.data.formatOptionAnswers
 import com.zlight106.nvvocab.domain.AnswerPositionPlanner
 import com.zlight106.nvvocab.domain.QuizXmlParser
-import com.zlight106.nvvocab.domain.WordUsagePractice
 import java.io.ByteArrayInputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -27,53 +26,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class AiPracticeGateway {
-    suspend fun requestPos(settings: AiSettings, prompt: String, input: JSONObject): String = withContext(Dispatchers.IO) {
-        validateSettings(settings)
-        val body = JSONObject().put("model", settings.model)
-            .put("messages", JSONArray()
-                .put(JSONObject().put("role", "system").put("content", prompt))
-                .put(JSONObject().put("role", "user").put("content", input.toString())))
-            .put("temperature", 0.2).put("max_tokens", 16000).put("stream", false)
-            .apply { if (settings.provider == AiProvider.DEEPSEEK) put("thinking", JSONObject().put("type", "disabled")) }
-        val response = JSONObject(executeRequest(settings, body))
-        val choice = response.getJSONArray("choices").getJSONObject(0)
-        require(choice.optString("finish_reason") != "length") { "AI 输出被截断，请减少批量数量" }
-        choice.getJSONObject("message").getString("content")
-    }
-
-    suspend fun generateWordUsageQuestions(
-        settings: AiSettings,
-        targets: List<WordEntry>,
-        difficulty: PracticeDifficulty,
-        onProgress: (Float) -> Unit,
-    ): List<ParsedQuizQuestion> = withContext(Dispatchers.IO) {
-        validateSettings(settings)
-        require(targets.isNotEmpty()) { "当前范围没有可生成用法题的单词。" }
-        val batches = targets.chunked(3)
-        buildList {
-            batches.forEachIndexed { index, batch ->
-                val words = JSONArray().apply {
-                    batch.forEach { put(JSONObject().put("word", it.spelling).put("translation", it.translation)) }
-                }
-                val body = JSONObject()
-                    .put("model", settings.model)
-                    .put("messages", JSONArray()
-                        .put(JSONObject().put("role", "system").put("content", WordUsagePractice.prompt(difficulty)))
-                        .put(JSONObject().put("role", "user").put("content", JSONObject().put("targets", words).toString())))
-                    .put("temperature", 0.3)
-                    .put("max_tokens", 6000)
-                    .put("stream", false)
-                    .apply { if (settings.provider == AiProvider.DEEPSEEK) put("thinking", JSONObject().put("type", "disabled")) }
-                val response = JSONObject(executeRequest(settings, body))
-                val content = response.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty()
-                val questions = WordUsagePractice.parseXml(extractQuizXml(content), batch)
-                val offset = size
-                addAll(questions.mapIndexed { questionIndex, question -> question.copy(originalIndex = offset + questionIndex) })
-                onProgress((index + 1f) / batches.size)
-            }
-        }
-    }
-
     suspend fun testConnection(settings: AiSettings): String = withContext(Dispatchers.IO) {
         validateSettings(settings)
         val body = JSONObject()

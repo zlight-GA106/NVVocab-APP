@@ -1,8 +1,6 @@
 package com.zlight106.nvvocab.ui.screens
 
-import com.zlight106.nvvocab.domain.WordUsagePractice
 import com.zlight106.nvvocab.data.*
-import com.zlight106.nvvocab.domain.PosPractice
 
 import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
@@ -103,17 +101,6 @@ import java.util.Locale
 import kotlinx.coroutines.delay
 
 sealed interface PracticeSessionRequest : java.io.Serializable {
-    data class Pos(
-        val queue: List<PosExercise>, val completeMode: Boolean = false,
-        val timeLimitSeconds: Int = 0, val focusBlanks: Set<Int> = emptySet(),
-        val slotFirst: Boolean = false, val foundation: Boolean = false,
-        val followUpCet4: PosExercise? = null,
-    ) : PracticeSessionRequest {
-        companion object {
-            // Keep existing Java-serialized paused POS sessions readable.
-            private const val serialVersionUID: Long = -5488165408987117757L
-        }
-    }
     data class Words(
         val queue: List<WordEntry>,
         val mode: DictationMode,
@@ -341,9 +328,6 @@ fun PracticeSessionScreen(
         ) {
             WebPronunciationHost(pronunciationPlayer)
             when (request) {
-                is PracticeSessionRequest.Pos -> androidx.compose.runtime.key(sessionRuntime.sessionId) {
-                    PosSession(request, sessionRuntime, viewModel, speakWord, onExit)
-                }
                 is PracticeSessionRequest.Words -> WordSession(
                     request = request,
                     runtime = sessionRuntime,
@@ -363,7 +347,6 @@ fun PracticeSessionScreen(
                     viewModel = viewModel,
                     showAnswers = administratorMode,
                     onOptionSelected = speakOption,
-                    onSpeakText = speakWord,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -388,7 +371,6 @@ fun PracticeSessionScreen(
                     viewModel = viewModel,
                     showAnswers = true,
                     onOptionSelected = speakOption,
-                    onSpeakText = speakWord,
                     onSettled = viewModel::markPracticeSessionFinished,
                     onExit = onExit,
                 )
@@ -448,9 +430,8 @@ fun PracticeSessionScreen(
 }
 
 private fun PracticeSessionRequest.title(): String = when (this) {
-    is PracticeSessionRequest.Pos -> if (foundation) "CET-4 保底训练" else queue.firstOrNull()?.mode?.label ?: "词性专项"
     is PracticeSessionRequest.Words -> if (mode == DictationMode.REVIEW) "复习默写" else "拼写练习"
-    is PracticeSessionRequest.Quiz -> if (queue.firstOrNull()?.category == WordUsagePractice.CATEGORY) "单词用法复习" else "题库答题"
+    is PracticeSessionRequest.Quiz -> "题库答题"
     is PracticeSessionRequest.Contrast -> "对照练习"
     is PracticeSessionRequest.WrongBook -> "错题复习"
     is PracticeSessionRequest.Mixed -> "混合复习"
@@ -471,7 +452,6 @@ private fun interruptAndSettle(
         return
     }
     when (request) {
-        is PracticeSessionRequest.Pos -> viewModel.recordPosSession(request.queue, attempts, complete)
         is PracticeSessionRequest.Words -> {
             val results = if (request.mode == DictationMode.REVIEW) attempts.mapNotNull { attempt ->
                 request.queue.getOrNull(attempt.sequenceIndex)?.let { word ->
@@ -562,7 +542,6 @@ private fun WordSession(
             )
         } else {
             WordQuestion(
-                viewModel = viewModel,
                 mode = request.mode,
                 word = request.queue[currentIndex],
                 position = currentIndex + 1,
@@ -657,7 +636,6 @@ private fun WordSession(
 
 @Composable
 private fun WordQuestion(
-    viewModel: MainViewModel,
     mode: DictationMode,
     word: WordEntry,
     position: Int,
@@ -717,7 +695,6 @@ private fun WordQuestion(
                 }
             }
             word.phonetic?.let { Text("[$it]", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            if (checked) com.zlight106.nvvocab.ui.components.PosWordLabels(word, viewModel)
             if (hinted) Text("首字母：${word.spelling.firstOrNull()?.uppercaseChar() ?: ""}")
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
@@ -777,7 +754,6 @@ private fun QuizSession(
     viewModel: MainViewModel,
     showAnswers: Boolean,
     onOptionSelected: (String) -> Unit,
-    onSpeakText: (String) -> Unit,
     onSettled: () -> Unit,
     onExit: () -> Unit,
 ) {
@@ -904,7 +880,6 @@ private fun QuizSession(
                     onPrevious = returnToPrevious,
                     onComplete = ::saveAndAdvance,
                     onOptionSelected = onOptionSelected,
-                    onSpeakText = onSpeakText,
                 )
                 QuizQuestionType.FILL_BLANK -> FillBlankQuestion(
                     question = currentQuestion,
@@ -944,7 +919,6 @@ private fun ChoiceQuestion(
     onPrevious: () -> Unit,
     onComplete: (QuizSessionAnswer) -> Unit,
     onOptionSelected: (String) -> Unit,
-    onSpeakText: (String) -> Unit,
 ) {
     var selectedAnswers by rememberSaveable(question.id, initialAnswer) {
         mutableStateOf(initialAnswer?.selectedAnswers.orEmpty())
@@ -953,7 +927,6 @@ private fun ChoiceQuestion(
         mutableStateOf(!unifiedSettlement && initialAnswer != null)
     }
     val multipleChoice = question.answers.size > 1
-    val wordUsage = question.category == WordUsagePractice.CATEGORY
     val correct = selectedAnswers == question.answers
     var remainingSeconds by rememberSaveable(question.id, timeLimitSeconds) {
         mutableIntStateOf(timeLimitSeconds ?: 0)
@@ -987,14 +960,6 @@ private fun ChoiceQuestion(
                     Text("${question.score} 分", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (wordUsage) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("核心单词：${question.sourceReference.orEmpty()}", modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.primary)
-                    IconButton(onClick = { onSpeakText(question.sourceReference.orEmpty()) }, enabled = enabled) {
-                        Icon(NvvIcons.Volume2, "朗读核心单词")
-                    }
-                }
-            }
             Text(question.text, style = MaterialTheme.typography.titleLarge)
             Text(if (multipleChoice) "多选题" else "单选题", color = MaterialTheme.colorScheme.onSurfaceVariant)
             question.options.forEach { option ->
@@ -1010,7 +975,7 @@ private fun ChoiceQuestion(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         if (!checked && enabled) {
-                            if (wordUsage) onSpeakText(option.text) else onOptionSelected(option.text)
+                            onOptionSelected(option.text)
                             selectedAnswers = if (multipleChoice) {
                                 if (selected) selectedAnswers - option.id else selectedAnswers + option.id
                             } else {
@@ -1029,11 +994,6 @@ private fun ChoiceQuestion(
                     ) {
                         if (multipleChoice) Checkbox(selected, null) else RadioButton(selected, null)
                         Text("${option.id}. ${option.text}", modifier = Modifier.weight(1f))
-                        if (wordUsage) {
-                            IconButton(onClick = { onSpeakText(option.text) }, enabled = enabled) {
-                                Icon(NvvIcons.Volume2, "朗读词组 ${option.text}")
-                            }
-                        }
                     }
                 }
             }
@@ -1046,15 +1006,8 @@ private fun ChoiceQuestion(
                     },
                     color = if (correct) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 )
-                if (wordUsage) {
-                    question.explanation?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    val example = WordUsagePractice.exampleText(question.explanation)
-                    if (example.isNotBlank()) {
-                        OutlinedButton(onClick = { onSpeakText(example) }, enabled = enabled, shape = CircleShape) {
-                            Icon(NvvIcons.Volume2, null)
-                            Text("播放例句", Modifier.padding(start = 8.dp))
-                        }
-                    }
+                question.explanation?.takeIf(String::isNotBlank)?.let {
+                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Row(
@@ -1695,20 +1648,9 @@ private fun MixedSession(
                 color = MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge,
             )
-            if (item.mode == MixedReviewMode.POS) {
-                val word = requireNotNull(item.word)
-                val previous = runtime.attempts.firstOrNull { it.sequenceIndex == currentIndex }
-                PosQuestion(PosPractice.drill(word), previous, false, request.timeLimitSeconds,
-                    { viewModel.elapsedQuestionTime(runtime.sessionId, currentIndex) }, onSpeakWord,
-                    { selected -> if (viewModel.practiceSessionRuntime.value?.attempts?.none { it.sequenceIndex == currentIndex } == true) {
-                        viewModel.stagePracticeAttempt(PosPractice.attempt(PosPractice.drill(word), runtime.sessionId, currentIndex, selected,
-                            false, viewModel.snapshotQuestionTime(runtime.sessionId, currentIndex), previous))
-                    } },
-                    { previous?.let(::completeCurrent) }, !settling, liveWord = word)
-            } else if (item.mode == MixedReviewMode.DICTATION) {
+            if (item.mode == MixedReviewMode.DICTATION) {
                 val word = requireNotNull(item.word)
                 WordQuestion(
-                    viewModel = viewModel,
                     mode = DictationMode.REVIEW,
                     word = word,
                     position = currentIndex + 1,
@@ -1804,7 +1746,7 @@ private fun MixedSession(
 }
 
 private fun MixedReviewMode.sessionLabel(): String = when (this) {
-    MixedReviewMode.POS -> "当前模式：词性判断"
+    MixedReviewMode.POS -> error("旧版词性混合题不再支持。")
     MixedReviewMode.DICTATION -> "当前模式：默写"
     MixedReviewMode.CHINESE_TO_ENGLISH -> "当前模式：中翻英"
     MixedReviewMode.ENGLISH_TO_CHINESE -> "当前模式：英翻中"
@@ -1812,7 +1754,7 @@ private fun MixedReviewMode.sessionLabel(): String = when (this) {
 }
 
 private fun MixedReviewMode.toAttemptMode(): PracticeAttemptMode = when (this) {
-    MixedReviewMode.POS -> PracticeAttemptMode.WORD_POS_CLASSIFICATION
+    MixedReviewMode.POS -> error("旧版词性混合题不再支持。")
     MixedReviewMode.DICTATION -> PracticeAttemptMode.WORD_DICTATION
     MixedReviewMode.CHINESE_TO_ENGLISH -> PracticeAttemptMode.CHINESE_TO_ENGLISH
     MixedReviewMode.ENGLISH_TO_CHINESE -> PracticeAttemptMode.ENGLISH_TO_CHINESE

@@ -17,7 +17,7 @@ class QuizBankZipWriterTest {
         val banks = listOf(QuizBank("one", "搭配/练习", null, 0L, 1), QuizBank("two", "搭配\\练习", null, 0L, 1))
         val choice = QuizQuestion("q1", "one", 0, 10, "We ____ our friends.",
             listOf(QuizOption("A", "rely on"), QuizOption("B", "rely of")), setOf("A"),
-            explanation = "搭配解析\n例句：We rely on our friends.", category = WordUsagePractice.CATEGORY, sourceReference = "rely")
+            explanation = "搭配解析\n例句：We rely on our friends.", category = "单词用法", sourceReference = "rely")
         val fill = QuizQuestion("q2", "two", 0, 5, "填写单词", emptyList(), emptySet(),
             type = QuizQuestionType.FILL_BLANK, referenceAnswer = "rely", acceptedAnswers = setOf("rely", "RELY"))
         val output = ByteArrayOutputStream()

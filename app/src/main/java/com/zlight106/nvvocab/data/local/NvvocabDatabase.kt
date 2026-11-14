@@ -7,8 +7,6 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.zlight106.nvvocab.data.PartOfSpeech
 import com.zlight106.nvvocab.data.PosErrorType
-import com.zlight106.nvvocab.data.PosExercise
-import com.zlight106.nvvocab.domain.PosCodec
 import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.ContrastPracticeType
 import com.zlight106.nvvocab.data.DailyPracticeProgress
@@ -119,28 +117,6 @@ class NvvocabDatabase(context: Context) : SQLiteOpenHelper(
         PosMigration.wordColumns.forEach { (column, declaration) -> database.addColumnIfMissing(TABLE_WORDS, column, declaration) }
         PosMigration.attemptColumns.forEach { (column, declaration) -> database.addColumnIfMissing(TABLE_PRACTICE_ATTEMPTS, column, declaration) }
         database.execSQL(PosMigration.cacheSql)
-    }
-
-    fun getPosExercises(): List<PosExercise> = readableDatabase.rawQuery("SELECT payload FROM pos_exercises", null).use { cursor ->
-        buildList { while (cursor.moveToNext()) runCatching { PosCodec.decode(cursor.getString(0)) }.getOrNull()?.let(::add) }
-    }
-
-    fun savePosExercises(exercises: List<PosExercise>) {
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            exercises.forEach { q -> db.insertWithOnConflict("pos_exercises", null, ContentValues().apply {
-                put("id", q.id); put("payload", PosCodec.encode(q))
-            }, SQLiteDatabase.CONFLICT_REPLACE) }
-            db.setTransactionSuccessful()
-        } finally { db.endTransaction() }
-    }
-
-    fun updateWordPos(id: String, parts: Set<PartOfSpeech>, needsReview: Boolean, explanation: String) {
-        writableDatabase.update(TABLE_WORDS, ContentValues().apply {
-            put("parts_of_speech", PartOfSpeech.encode(parts)); put("pos_needs_review", if (needsReview) 1 else 0)
-            put("pos_explanation", explanation); put("dirty", 1)
-        }, "id = ?", arrayOf(id))
     }
 
     fun getWords(): List<WordEntry> = readableDatabase.query(

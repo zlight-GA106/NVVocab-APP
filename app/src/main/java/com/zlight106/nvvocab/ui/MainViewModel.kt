@@ -9,9 +9,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.zlight106.nvvocab.NvvocabApplication
 import com.zlight106.nvvocab.data.AuthSession
-import com.zlight106.nvvocab.data.*
-import com.zlight106.nvvocab.domain.PosPractice
-import com.zlight106.nvvocab.domain.PosCodec
 import com.zlight106.nvvocab.data.AiSettings
 import com.zlight106.nvvocab.data.ContrastPracticeSession
 import com.zlight106.nvvocab.data.ContrastPracticePreset
@@ -44,6 +41,8 @@ import com.zlight106.nvvocab.data.SyncSettings
 import com.zlight106.nvvocab.data.ThemeMode
 import com.zlight106.nvvocab.data.WordEntry
 import com.zlight106.nvvocab.data.WrongQuestionEntry
+import com.zlight106.nvvocab.data.isLegacyPosQuestion
+import com.zlight106.nvvocab.data.isLegacyPosSource
 import com.zlight106.nvvocab.data.WordReviewPreferences
 import com.zlight106.nvvocab.data.WordReviewResult
 import com.zlight106.nvvocab.ui.screens.PracticeSessionRequest
@@ -53,7 +52,6 @@ import com.zlight106.nvvocab.data.local.TelemetryArchiveEntry
 import com.zlight106.nvvocab.data.update.EasyUpdateManager
 import com.zlight106.nvvocab.data.update.EasyUpdatePhase
 import com.zlight106.nvvocab.domain.WordTextParser
-import com.zlight106.nvvocab.domain.WordUsagePractice
 import com.zlight106.nvvocab.domain.AttemptAnalytics
 import com.zlight106.nvvocab.domain.ParaphrasePracticeGenerator
 import com.zlight106.nvvocab.domain.ParaphraseSeedBatchParser
@@ -97,73 +95,21 @@ data class AppUiState(
 )
 
 private fun PracticeSessionRequest.titleForArchive(): String = when (this) {
-    is PracticeSessionRequest.Pos -> if (foundation) "CET-4 保底训练" else queue.firstOrNull()?.mode?.label ?: "词性专项"
     is PracticeSessionRequest.Words -> "单词复习"
-    is PracticeSessionRequest.Quiz -> if (queue.firstOrNull()?.category == WordUsagePractice.CATEGORY) "单词用法复习" else "题库练习"
+    is PracticeSessionRequest.Quiz -> "题库练习"
     is PracticeSessionRequest.Contrast -> "对照练习"
     is PracticeSessionRequest.WrongBook -> "错题复习"
     is PracticeSessionRequest.Mixed -> "混合复习"
 }
 
+private fun PracticeSessionRequest.hasLegacyPosQuestions(): Boolean = when (this) {
+    is PracticeSessionRequest.Quiz -> queue.any { it.sourceReference.isLegacyPosSource() }
+    is PracticeSessionRequest.WrongBook -> queue.any { it.isLegacyPosQuestion }
+    is PracticeSessionRequest.Mixed -> queue.any { it.mode == MixedReviewMode.POS }
+    else -> false
+}
+
 class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
-    private val mutablePosBusy = MutableStateFlow(false)
-    private val mutablePosProgress = MutableStateFlow(0f)
-    val posBusy = mutablePosBusy.asStateFlow()
-    val posProgress = mutablePosProgress.asStateFlow()
-    val posExercises get() = repository.posExercises
-    val posSettings get() = application.preferences.readPosSettings()
-
-    fun savePosSettings(value: PosSettings) {
-        val old = posSettings
-        application.preferences.savePosSettings(value)
-        if (old.mixedEnabled != value.mixedEnabled) {
-            val mixed = preferences.readMixedReviewPreferences()
-            val enabled = if (value.mixedEnabled) mixed.enabledModes + MixedReviewMode.POS else mixed.enabledModes - MixedReviewMode.POS
-            val validModes = enabled.ifEmpty { setOf(MixedReviewMode.DICTATION) }
-            val percentages = if (value.mixedEnabled && validModes.size == 5) mapOf(
-                MixedReviewMode.DICTATION to 25, MixedReviewMode.CHINESE_TO_ENGLISH to 20,
-                MixedReviewMode.ENGLISH_TO_CHINESE to 20, MixedReviewMode.ENGLISH_DEFINITION_TO_ENGLISH to 15, MixedReviewMode.POS to 20)
-            else validModes.mapIndexed { index, mode -> mode to (100 / validModes.size + if (index < 100 % validModes.size) 1 else 0) }.toMap()
-            saveMixedReviewPreferences(mixed.copy(enabledModes = validModes, modePercentages = percentages))
-        }
-    }
-    fun readPosDraft(session: String) = application.preferences.readPosDraft(session)
-    fun savePosDraft(session: String, draft: String) = application.preferences.savePosDraft(session, draft)
-
-    fun annotatePos(targets: List<WordEntry>, onlyUnknown: Boolean, forceAi: Boolean = false) {
-        if (mutablePosBusy.value) return
-        mutablePosBusy.value = true; mutablePosProgress.value = 0f
-        viewModelScope.launch {
-            runCatching { repository.annotatePos(targets, onlyUnknown, forceAi) { mutablePosProgress.value = it } }
-                .onSuccess { showMessage("已识别 $it 个词条；低置信度词条可在词性专项中复核") }
-                .onFailure { showMessage(it.message ?: "词性识别失败，已保留原有数据") }
-            mutablePosBusy.value = false
-        }
-    }
-
-    fun confirmWordPos(word: WordEntry, parts: Set<PartOfSpeech>) {
-        viewModelScope.launch {
-            runCatching { repository.confirmWordPos(word, parts) }.onFailure { showMessage(it.message ?: "词性保存失败") }
-        }
-    }
-
-    fun generatePos(mode: PosMode, targets: List<WordEntry>, count: Int) {
-        if (mutablePosBusy.value) return
-        mutablePosBusy.value = true; mutablePosProgress.value = 0f
-        viewModelScope.launch {
-            runCatching { repository.generatePos(mode, targets, count) { mutablePosProgress.value = it } }
-                .onSuccess { showMessage("已缓存 ${it.size} ${if (mode == PosMode.CET4) "套模拟题" else "道题"}，可离线训练") }
-                .onFailure { showMessage(it.message ?: "生成失败，旧题仍可使用") }
-            mutablePosBusy.value = false
-        }
-    }
-
-    fun recordPosSession(exercises: List<PosExercise>, attempts: List<PracticeAttempt>, onComplete: () -> Unit, onFailure: () -> Unit = {}) {
-        viewModelScope.launch {
-            runCatching { repository.recordPosSession(exercises, attempts) }
-                .onSuccess { onComplete() }.onFailure { showMessage(it.message ?: "词性练习保存失败"); onFailure() }
-        }
-    }
     private val preferences = application.preferences
     private val telemetryArchive = TelemetryArchive(application)
     private val pausedPracticeStore = PausedPracticeStore(application)
@@ -174,8 +120,6 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     private val mutableUiState = MutableStateFlow(readUiState())
     private val mutableContrastGenerationProgress = MutableStateFlow(0f)
     private val mutableMixedGenerationProgress = MutableStateFlow(0f)
-    private val mutableUsageGenerating = MutableStateFlow(false)
-    private val mutableUsageGenerationProgress = MutableStateFlow(0f)
     private val mutableExportingQuizBanks = MutableStateFlow(false)
     private val mutableActivePracticeSession = MutableStateFlow<PracticeSessionRequest?>(null)
     private val mutableActivePracticeSessionId = MutableStateFlow<String?>(null)
@@ -194,8 +138,6 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     val studyTimeProgress = application.studyTimeTracker.progress
     val contrastGenerationProgress: StateFlow<Float> = mutableContrastGenerationProgress.asStateFlow()
     val mixedGenerationProgress: StateFlow<Float> = mutableMixedGenerationProgress.asStateFlow()
-    val usageGenerating = mutableUsageGenerating.asStateFlow()
-    val usageGenerationProgress = mutableUsageGenerationProgress.asStateFlow()
     val exportingQuizBanks = mutableExportingQuizBanks.asStateFlow()
     val localDataLoaded = repository.localDataLoaded
     val wrongQuestions = repository.wrongQuestions
@@ -223,6 +165,10 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
 
     init {
         pausedPracticeStore.restore()?.let { snapshot ->
+            if (snapshot.request.hasLegacyPosQuestions()) {
+                pausedPracticeStore.clear()
+                return@let
+            }
             mutableActivePracticeSession.value = snapshot.request
             mutableActivePracticeSessionId.value = snapshot.runtime.sessionId
             mutablePracticeSessionRuntime.value = snapshot.runtime
@@ -474,20 +420,6 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         }
     }
 
-    fun generateWordUsageQuestions(targets: List<WordEntry>, difficulty: PracticeDifficulty, onComplete: (Result<List<QuizQuestion>>) -> Unit) {
-        if (mutableUsageGenerating.value) return
-        mutableUsageGenerating.value = true
-        mutableUsageGenerationProgress.value = 0f
-        viewModelScope.launch {
-            val result = runCatching {
-                repository.generateWordUsageQuestions(targets, difficulty) { mutableUsageGenerationProgress.value = it }
-            }
-            mutableUsageGenerating.value = false
-            result.exceptionOrNull()?.let { showMessage(it.message ?: "单词用法题生成失败") }
-            onComplete(result)
-        }
-    }
-
     fun exportAllQuizBanks(uri: Uri) {
         if (mutableExportingQuizBanks.value) return
         mutableExportingQuizBanks.value = true
@@ -573,17 +505,10 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
 
                 val generatedByItemId = mutableMapOf<String, ContrastQuestion>()
                 var completedChoices = 0
-                MixedReviewMode.entries.filter { it != MixedReviewMode.DICTATION }.forEach { mode ->
+                MixedReviewMode.availableModes.filter { it != MixedReviewMode.DICTATION }.forEach { mode ->
                     val modeAssignments = choiceAssignments.filter { it.mode == mode }
                     if (modeAssignments.isEmpty()) return@forEach
-                    val generated = if (mode == MixedReviewMode.POS) {
-                        modeAssignments.map { assignment ->
-                            val word = requireNotNull(assignment.word)
-                            ContrastQuestion("pos-word:${word.id}", word.id, word.spelling,
-                                PartOfSpeech.core.map { "${it.shortLabel} ${it.label}" },
-                                PartOfSpeech.core.indexOf(PosPractice.core(word.partsOfSpeech).first()))
-                        }
-                    } else if (mode == MixedReviewMode.ENGLISH_DEFINITION_TO_ENGLISH) {
+                    val generated = if (mode == MixedReviewMode.ENGLISH_DEFINITION_TO_ENGLISH) {
                         modeAssignments.map { assignment ->
                             ParaphrasePracticeGenerator.generate(
                                 seed = requireNotNull(assignment.paraphraseSeed),
@@ -639,8 +564,6 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         viewModelScope.launch {
             runCatching {
                 if (wordResults.isNotEmpty()) repository.recordReviewSession(wordResults)
-                val posAttempts = attempts.filter { it.mode in PosPractice.modes }
-                if (posAttempts.isNotEmpty()) repository.recordPosSession(repository.words.value.map(PosPractice::drill), posAttempts)
                 val totalContrastCount = contrastResults.values.sumOf(List<ContrastQuestionResult>::size)
                 contrastResults.forEach { (mode, results) ->
                     if (results.isEmpty() || mode == MixedReviewMode.DICTATION || mode == MixedReviewMode.POS) return@forEach
@@ -682,7 +605,11 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         }
     }
 
-    fun startPracticeSession(request: PracticeSessionRequest) {
+    fun startPracticeSession(request: PracticeSessionRequest): Boolean {
+        if (request.hasLegacyPosQuestions()) {
+            showMessage("此练习包含旧版词性专项题目。可在题库管理中查看或导出原题。")
+            return false
+        }
         pausedPracticeStore.clear()
         synchronized(timerLock) {
             accumulatedQuestionTime.clear()
@@ -692,10 +619,8 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
         val sessionId = UUID.randomUUID().toString()
         mutableActivePracticeSessionId.value = sessionId
         mutablePracticeSessionRuntime.value = PracticeSessionRuntime(sessionId = sessionId)
-        val posQueue = (request as? PracticeSessionRequest.Quiz)?.queue?.mapNotNull(PosCodec::fromQuiz).orEmpty()
-        mutableActivePracticeSession.value = if (request is PracticeSessionRequest.Quiz && posQueue.size == request.queue.size && posQueue.isNotEmpty()) {
-            PracticeSessionRequest.Pos(if (posQueue.first().mode == PosMode.CET4) posQueue.take(1) else posQueue, posSettings.completeMode, request.timeLimitSeconds ?: 0, slotFirst = posSettings.slotFirst)
-        } else request
+        mutableActivePracticeSession.value = request
+        return true
     }
 
     fun closePracticeSession() {
@@ -729,7 +654,6 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
     }
 
     fun markPracticeSessionFinished() {
-        mutablePracticeSessionRuntime.value?.sessionId?.let { preferences.clearPosDraft(it) }
         pausedPracticeStore.clear()
         mutablePracticeSessionRuntime.value = mutablePracticeSessionRuntime.value?.copy(finished = true)
         val runtime = mutablePracticeSessionRuntime.value ?: return
@@ -1183,7 +1107,7 @@ class MainViewModel(private val application: NvvocabApplication) : ViewModel() {
 }
 
 private fun MixedReviewMode.toContrastPracticeType(): ContrastPracticeType = when (this) {
-    MixedReviewMode.POS -> error("词性模式采用本地判题")
+    MixedReviewMode.POS -> error("旧版词性混合题不再支持。")
     MixedReviewMode.CHINESE_TO_ENGLISH -> ContrastPracticeType.CHINESE_TO_ENGLISH
     MixedReviewMode.ENGLISH_TO_CHINESE -> ContrastPracticeType.ENGLISH_TO_CHINESE
     MixedReviewMode.ENGLISH_DEFINITION_TO_ENGLISH -> ContrastPracticeType.ENGLISH_DEFINITION_TO_ENGLISH

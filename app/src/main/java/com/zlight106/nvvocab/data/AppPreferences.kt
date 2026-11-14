@@ -8,33 +8,6 @@ import org.json.JSONObject
 class AppPreferences(context: Context) {
     private val preferences = context.getSharedPreferences("nvvocab_preferences", Context.MODE_PRIVATE)
 
-    fun readPosSettings(): PosSettings {
-        val q = runCatching { JSONObject(preferences.getString("pos_settings", "{}").orEmpty()) }.getOrElse { JSONObject() }
-        return PosSettings(q.optInt("count", 20).coerceIn(1, 200), q.optInt("time", 0).takeIf { it in setOf(0, 3, 5) } ?: 0,
-            q.optBoolean("complete"), q.optInt("batch", 30).coerceIn(30, 100), q.optBoolean("explain", true),
-            q.optBoolean("mixed"), q.optBoolean("unknown"),
-            q.optString("annotation", POS_ANNOTATION_PROMPT).ifBlank { POS_ANNOTATION_PROMPT },
-            q.optString("context", POS_CONTEXT_PROMPT).ifBlank { POS_CONTEXT_PROMPT },
-            q.optString("slot", POS_SLOT_PROMPT).ifBlank { POS_SLOT_PROMPT },
-            q.optString("cet4", POS_CET4_PROMPT).ifBlank { POS_CET4_PROMPT },
-            slotFirst = q.optBoolean("slotFirst", true),
-            foundationIncludeCet4 = q.optBoolean("foundationCet4", false))
-    }
-
-    fun readPosDraft(session: String): String = preferences.getString("pos_draft_$session", "{}").orEmpty()
-    fun savePosDraft(session: String, draft: String) { preferences.edit().putString("pos_draft_$session", draft).apply() }
-    fun clearPosDraft(session: String) { preferences.edit().remove("pos_draft_$session").apply() }
-
-    fun savePosSettings(settings: PosSettings) {
-        val q = JSONObject().put("count", settings.questionCount).put("time", settings.timeLimitSeconds)
-            .put("complete", settings.completeMode).put("batch", settings.batchSize).put("explain", settings.autoExplanation)
-            .put("mixed", settings.mixedEnabled).put("unknown", settings.autoUnknown)
-            .put("annotation", settings.annotationPrompt).put("context", settings.contextPrompt)
-            .put("slot", settings.slotPrompt).put("cet4", settings.cet4Prompt)
-            .put("slotFirst", settings.slotFirst).put("foundationCet4", settings.foundationIncludeCet4)
-        preferences.edit().putString("pos_settings", q.toString()).apply()
-    }
-
     fun readEasyUpdateServerUrl(): String = preferences.getString(
         KEY_EASY_UPDATE_SERVER_URL,
         "http://192.168.95.55:19910",
@@ -308,15 +281,17 @@ class AppPreferences(context: Context) {
     }
 
     fun readMixedReviewPreferences(): MixedReviewPreferences {
-        val enabledModes = preferences.getStringSet(
-            KEY_MIXED_REVIEW_ENABLED_MODES,
-            MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.map(MixedReviewMode::name).toSet(),
-        ).orEmpty().mapNotNull { name ->
-            runCatching { MixedReviewMode.valueOf(name) }.getOrNull()
-        }.toSet().ifEmpty { MixedReviewMode.entries.filter { it != MixedReviewMode.POS }.toSet() }
         val defaults = defaultMixedModePercentages()
-        val percentages = MixedReviewMode.entries.associateWith { mode ->
+        val savedModes = preferences.getStringSet(KEY_MIXED_REVIEW_ENABLED_MODES, null).orEmpty()
+        val selectedModes = MixedReviewMode.availableModes.filter { it.name in savedModes }
+        val enabledModes = selectedModes.toSet().ifEmpty { defaults.keys }
+        val savedPercentages = MixedReviewMode.availableModes.associateWith { mode ->
             preferences.getInt(mixedModePercentageKey(mode), defaults.getValue(mode)).coerceIn(0, 100)
+        }
+        val percentages = when {
+            MixedReviewMode.POS.name !in savedModes -> savedPercentages
+            selectedModes.isEmpty() -> defaults
+            else -> savedPercentages + redistributeMixedPercentages(selectedModes, savedPercentages)
         }
         return MixedReviewPreferences(
             selectedTags = preferences.getStringSet(KEY_MIXED_REVIEW_TAGS, emptySet()).orEmpty().toSet(),
@@ -339,13 +314,32 @@ class AppPreferences(context: Context) {
             .putString(KEY_MIXED_REVIEW_OPTION_COUNT, value.optionCountText)
             .putString(KEY_MIXED_REVIEW_TIME_LIMIT, value.timeLimitText)
             .putBoolean(KEY_MIXED_REVIEW_SAVE_GENERATED_BANK, value.saveGeneratedBank)
-        MixedReviewMode.entries.forEach { mode ->
+        MixedReviewMode.availableModes.forEach { mode ->
             editor.putInt(
                 mixedModePercentageKey(mode),
                 value.modePercentages[mode]?.coerceIn(0, 100) ?: 0,
             )
         }
         editor.apply()
+    }
+
+    private fun redistributeMixedPercentages(
+        modes: List<MixedReviewMode>,
+        percentages: Map<MixedReviewMode, Int>,
+    ): Map<MixedReviewMode, Int> {
+        val weights = modes.associateWith { percentages.getValue(it).coerceAtLeast(1) }
+        val totalWeight = weights.values.sum()
+        val portions = weights.mapValues { (_, weight) -> 100 * weight / totalWeight }.toMutableMap()
+        val extra = 100 - portions.values.sum()
+        modes.sortedByDescending { mode -> 100 * weights.getValue(mode) % totalWeight }
+            .take(extra)
+            .forEach { mode -> portions[mode] = portions.getValue(mode) + 1 }
+        modes.filter { portions.getValue(it) == 0 }.forEach { mode ->
+            val largest = modes.maxBy { portions.getValue(it) }
+            portions[largest] = portions.getValue(largest) - 1
+            portions[mode] = 1
+        }
+        return portions
     }
 
     private fun mixedModePercentageKey(mode: MixedReviewMode): String =
